@@ -1,0 +1,14 @@
+dynamic geometry suballocated
+instanced geometry
+better terrain
+multithreading
+skybox
+water shader
+gpu geometry
+ambient occlusion
+god rays
+animations
+day-night cycle
+Dynamic LOD
+OIT
+multiple lights

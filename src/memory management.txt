@@ -1,0 +1,18 @@
+Two big buffers (like 2gb, millions of polygons):
+1. vertex buffer
+2. index buffer
+
+Quad vertex format:
+16: x
+16: y
+16: z
+3: direction
+13: ID
+
+Quad vertex format (greedy meshing):
+16: x
+16: y
+16: z
+3: direction
+6: width (64x64x64 chunks)
+7: ID
