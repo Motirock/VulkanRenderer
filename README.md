@@ -13,5 +13,6 @@ Specs tested:
   -Resolution: 2256x1504~60Hz  
 
 Results:  
-  -5500 average FPS with 1,200 polygons  
-  -4000 average FPS with 1,500,000 polygons  
+  -5500 average FPS with 3,600 polygons  
+  -4000 average FPS with 4,500,000 polygons  
+  -30 average FPS with 20,736,000 polygons
