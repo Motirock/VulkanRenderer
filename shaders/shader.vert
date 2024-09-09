@@ -11,8 +11,8 @@ layout(location = 0) in uint inID;
 layout(location = 1) in vec3 inInstancePosition;
 layout(location = 2) in uint inInstanceOrientation;
 
-layout(location = 0) out vec2 fragTexCoord;
-layout(location = 1) out vec3 fragColor;
+layout(location = 0) out vec2 fragmentTextureOrientation;
+layout(location = 1) out vec3 fragmentColor;
 
 const vec3 positions[24] = {
     //Positive x
@@ -68,7 +68,10 @@ const vec3 colors[4] = {
 
 void main() {
     gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inInstancePosition+positions[inInstanceOrientation*4+inID], 1.0);
-    fragTexCoord = textureCoordinates[inID];
-    fragColor = colors[inID];
-    //fragColor = rotatedPosition;
+    fragmentTextureOrientation = textureCoordinates[inID];
+    // fragmentTextureOrientation.x /= 8.0f;
+    // fragmentTextureOrientation.y /= 8.0f;
+    // fragmentTextureOrientation.x += 3.0f/8.0f;
+    // fragmentTextureOrientation.y += 1.0f/8.0f;
+    fragmentColor = colors[inID];
 }

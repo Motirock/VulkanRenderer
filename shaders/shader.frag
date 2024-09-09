@@ -8,8 +8,8 @@ layout(location = 1) in vec3 fragColor;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    // vec4 sampledColor = texture(texSampler, fragTexCoord);
-    // outColor = vec4(fragColor, 1.0) * sampledColor;
-    outColor = vec4(fragColor, 1.0);
+    vec4 sampledColor = texture(texSampler, fragTexCoord);
+    outColor = vec4(fragColor, 1.0) * sampledColor;
+    //outColor = vec4(fragColor, 1.0);
     //outColor = vec4(1.0f);
 }

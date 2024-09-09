@@ -45,14 +45,14 @@ namespace VkUtils {
         }
     };
 
-    struct InstanceData {
+    struct BlockFaceInstance {
         glm::vec3 pos;
         uint32_t orientation;
 
         static VkVertexInputBindingDescription getBindingDescription() {
             VkVertexInputBindingDescription bindingDescription{};
             bindingDescription.binding = 1;
-            bindingDescription.stride = sizeof(InstanceData);
+            bindingDescription.stride = sizeof(BlockFaceInstance);
             bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
             return bindingDescription;
@@ -64,17 +64,17 @@ namespace VkUtils {
             attributeDescriptions[0].binding = 1;
             attributeDescriptions[0].location = 1;
             attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[0].offset = offsetof(InstanceData, pos);
+            attributeDescriptions[0].offset = offsetof(BlockFaceInstance, pos);
 
             attributeDescriptions[1].binding = 1;
             attributeDescriptions[1].location = 2;
-            attributeDescriptions[1].format = VK_FORMAT_R32_SFLOAT;
-            attributeDescriptions[1].offset = offsetof(InstanceData, orientation);
+            attributeDescriptions[1].format = VK_FORMAT_R32_UINT;
+            attributeDescriptions[1].offset = offsetof(BlockFaceInstance, orientation);
 
             return attributeDescriptions;
         }
 
-        bool operator==(const InstanceData &other) const {
+        bool operator==(const BlockFaceInstance &other) const {
             return pos == other.pos;
         }
     };
