@@ -1,7 +1,6 @@
-# VulkanDemo - 1
+# VulkanDemo 1 - Simple Instanced Geometry
 
-Description:
-  -Instanced, batched geometry
+Instanced geometry in large batches. Shows a large grid of cubes with each face being instanced from the same geometry.  
 
 Specs tested:  
   -Computer: 2023 Framework 13  
