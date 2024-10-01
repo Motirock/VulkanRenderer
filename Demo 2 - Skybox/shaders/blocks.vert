@@ -6,6 +6,8 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 projection;
     vec3 cameraPosition;
     vec3 viewDirection;
+    float nearPlane;
+    float farPlane;
 } ubo;
 
 layout(location = 0) in uint inID;
@@ -77,15 +79,20 @@ const vec3 colors[4] = {
 
 void main() {
     vec3 localPosition = positions[inInstanceOrientation*4+inID];
+
+    //Width and height
     if (inInstanceOrientation == 0 || inInstanceOrientation == 1)
         localPosition *= vec3(1.0f, inInstanceWidthHeight.x, inInstanceWidthHeight.y);
     else if (inInstanceOrientation == 2 || inInstanceOrientation == 3)
         localPosition *= vec3(inInstanceWidthHeight.x, 1.0f, inInstanceWidthHeight.y);
     else
         localPosition *= vec3(inInstanceWidthHeight.x, inInstanceWidthHeight.y, 1.0f);
-    gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inInstancePosition+localPosition, 1.0);
+
+    //Calculate the position of the vertex in clip space
+    gl_Position = ubo.projection * ubo.view * vec4(inInstancePosition+localPosition, 1.0);
+
+    //Determine the texture coordinates of the vertex
     fragmentTextureCoordinates = textureCoordinates[inID];
     fragmentTextureCoordinates += textureOffsets[inInstanceBlockID];
-    fragmentColor = vec3(1.0f);//colors[inID];
-    //gl_Position.z = gl_Position.w; // Set z to w to enable depth testing
+    fragmentColor = colors[inID];
 }
