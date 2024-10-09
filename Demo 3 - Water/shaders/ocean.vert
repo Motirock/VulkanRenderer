@@ -66,12 +66,12 @@ vec4 getAmplitudeAndNormal(in float x, in float y, in float time) {
 
     for(int i = 0; i < octaves; i++) {
         amplitude += IDK[i]*a[i*2]/(i+1)   * sin(w[i*2]*x   + p[i*2]*time);
-        amplitude += IDK[i]*a[i*2+1]/(i+1) * sin(w[i*2+1]*y + p[i*2+1]*time+1.57f);
+        amplitude += IDK[i]*a[i*2+1]/(i+1) * sin(w[i*2+1]*y + p[i*2+1]*time+1.57f) * 0.5f;
 
         slopeX +=     IDK[i]*a[i*2]/(i+1)   * cos(w[i*2]*x   + p[i*2]*time);
-        slopeY +=     IDK[i]*a[i*2+1]/(i+1) * cos(w[i*2+1]*y + p[i*2+1]*time+1.57f);
+        slopeY +=     IDK[i]*a[i*2+1]/(i+1) * cos(w[i*2+1]*y + p[i*2+1]*time+1.57f) * 0.5f;
     }
-    amplitude *= 0.33333f*0.5f*maxAmplitude;
+    amplitude *= 0.33333f*0.66666f*maxAmplitude;
 
     return vec4(amplitude, cross(vec3(slopeX, 0.0f, 1.0f), (vec3(0.0f, slopeY, 1.0f))));
     //return vec4(amplitude, vec3(-slopeX, 0.0f, 1.0f));
@@ -81,7 +81,7 @@ vec4 getAmplitudeAndNormal(in float x, in float y, in float time) {
 vec3 lightDirection = -vec3(-0.577);
 
 void main() {
-    vec4 amplitudeAndNormal = getAmplitudeAndNormal(inPosition.x, inPosition.y, ubo.time*5.0f);
+    vec4 amplitudeAndNormal = getAmplitudeAndNormal(inPosition.x-inPosition.y/2.0f, inPosition.y+inPosition.x/2.0f, ubo.time*5.0f);
 
     //Get amplitude
     float amplitude = amplitudeAndNormal.x;

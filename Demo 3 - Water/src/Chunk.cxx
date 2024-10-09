@@ -50,21 +50,21 @@ void Chunk::generateMesh() {
                 }
 
                 if (i+1 < CHUNK_SIZE && z > getHeight(i+1, j)) {
-                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_X, rand()%2+1, glm::vec2(1, 1));
+                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_X, 1, glm::vec2(1, 1));
                 }
                 if (i-1 >= 0 && z > getHeight(i-1, j)) {
-                    addBlockFace(glm::vec3(x, y, z), VkUtils::NEGATIVE_X, rand()%2+1, glm::vec2(1, 1));
+                    addBlockFace(glm::vec3(x, y, z), VkUtils::NEGATIVE_X, 1, glm::vec2(1, 1));
                 }
 
                 if (j+1 < CHUNK_SIZE && z > getHeight(i, j+1)) {
-                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_Y, rand()%2+1, glm::vec2(1, 1));
+                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_Y, 1, glm::vec2(1, 1));
                 }
                 if (j-1 >= 0 && z > getHeight(i, j-1)) {
-                    addBlockFace(glm::vec3(x, y, z), VkUtils::NEGATIVE_Y, rand()%2+1, glm::vec2(1, 1));
+                    addBlockFace(glm::vec3(x, y, z), VkUtils::NEGATIVE_Y, 1, glm::vec2(1, 1));
                 }
 
                 if (z+1 > height) {
-                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_Z, rand()%2+1, glm::vec2(1, 1));
+                    addBlockFace(glm::vec3(x, y, z), VkUtils::POSITIVE_Z, 1, glm::vec2(1, 1));
                 }
             }
         }
