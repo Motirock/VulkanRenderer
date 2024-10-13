@@ -61,6 +61,7 @@ glslc shaders/composition.frag -o shaders/composition.frag.spv
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <string>
 
 #include <json/json.h>
 #include <json/value.h>
@@ -73,17 +74,17 @@ using namespace VkUtils;
 using namespace std::this_thread; //Sleep_for, sleep_until
 using namespace std::chrono; //Nanoseconds, system_clock, seconds
 
-const uint32_t WIDTH = 800;
-const uint32_t HEIGHT = 600;
+const uint32_t WIDTH = 1600;
+const uint32_t HEIGHT = 900;
 
-const std::string MODEL_PATH = "models/viking_room.obj";
-const std::string TEXTURE_PATH = "textures/viking_room.png";
+const std::string MODEL_PATH = "models/lost_empire/lost_empire.obj";
+//const std::string TEXTURE_PATH = "models/viking_room/viking_room.png";
 
 const uint32_t MAX_VERTEX_MEMORY = 1'000*sizeof(Vertex);
 const uint32_t MAX_INSTANCE_MEMORY = 2'000'000*sizeof(1);
 const uint32_t MAX_INDEX_MEMORY = 1'000*sizeof(uint32_t);
 
-const std::string TEXTURE_ATLAS_PATH = "textures/viking_room.png";
+const std::string TEXTURE_ATLAS_PATH = "models/lost_empire/lost_empire-RGBA.png";
 const std::string SKYBOX_PATH = "textures/skybox/";
 
 
@@ -157,6 +158,17 @@ struct UniformBufferObject {
     float time;
 };
 
+struct Light {
+    alignas(16) glm::vec3 position;
+    alignas(16) glm::vec3 color;
+    float strength; //!= 0
+};
+
+struct LightBufferObject {
+    int32_t lightCount;
+    alignas(16) Light lights[100];
+};
+
 struct FrameBufferAttachment {
     VkImage image;
     VkDeviceMemory mem;
@@ -201,8 +213,11 @@ private:
 
     std::vector<VkFramebuffer> offScreenFramebuffers;
 
+    FrameBufferAttachment positionAttachment;
     FrameBufferAttachment colorAttachment;
+    FrameBufferAttachment normalAttachment;
     FrameBufferAttachment depthAttachment;
+    const uint32_t COLOR_ATTACHMENT_COUNT = 3;
 
     VkRenderPass offScreenRenderPass;
     VkRenderPass onScreenRenderPass;
@@ -211,6 +226,9 @@ private:
 
     VkPipelineLayout mainPipelineLayout;
     VkPipeline mainPipeline;
+
+    // VkPipelineLayout lightPipelineLayout;
+    // VkPipeline lightPipeline;
 
     VkPipelineLayout skyboxPipelineLayout;
     VkPipeline skyboxPipeline;
@@ -255,6 +273,13 @@ private:
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
+
+    std::vector<Light> lights;
+    bool isLightBufferChanged = false;
+
+    VkBuffer lightBuffer;
+    VkDeviceMemory lightBufferMemory;
+    void *lightBufferMapped;
 
     VkDescriptorPool offScreenDescriptorPool;
     VkDescriptorPool onScreenDescriptorPool;
@@ -375,10 +400,21 @@ private:
 
         createSwapChain();
         createImageViews();
+
+        createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&positionAttachment);
+
         createAttachment(
 			VK_FORMAT_R16G16B16A16_SFLOAT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&colorAttachment);
+
+        createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&normalAttachment);
 
 		createAttachment(
 			findDepthFormat(),
@@ -416,6 +452,8 @@ private:
         createCompositionVertexBuffer();
 
         createUniformBuffers();
+
+        createLightBuffer();
 
         createOffScreenDescriptorPool();
         createOnScreenDescriptorPool();
@@ -560,14 +598,16 @@ private:
             vkDestroyImageView(device, imageView, nullptr);
         }
 
+        positionAttachment.cleanup(device);
         colorAttachment.cleanup(device);
+        normalAttachment.cleanup(device);
         depthAttachment.cleanup(device);
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
     }
 
     void cleanup() {
-        std::cout << "\n\n\n\n\n";
+        std::cout << "\n\nPROGRAM TERMINATED. CLEANING UP.\n\n";
 
         cleanupSwapChain();
 
@@ -588,7 +628,8 @@ private:
             vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
         }
 
-
+        vkDestroyBuffer(device, lightBuffer, nullptr);
+        vkFreeMemory(device, lightBufferMemory, nullptr);
 
         vkDestroyDescriptorPool(device, offScreenDescriptorPool, nullptr);
         vkDestroyDescriptorPool(device, onScreenDescriptorPool, nullptr);
@@ -666,7 +707,17 @@ private:
         createAttachment(
 			VK_FORMAT_R16G16B16A16_SFLOAT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&positionAttachment);
+
+        createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			&colorAttachment);
+            
+        createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&normalAttachment);
 
 		createAttachment(
 			findDepthFormat(),
@@ -675,6 +726,8 @@ private:
 
         createImageViews();
         createFramebuffers();
+
+        recreateOnScreenDescriptorSets();
     }
 
     void createInstance() {
@@ -912,37 +965,40 @@ private:
 	}
 
     void createOffScreenRenderPass() {
-        std::array<VkAttachmentDescription, 2> attachmentDescs = {};
+        VkAttachmentDescription attachmentDescs[COLOR_ATTACHMENT_COUNT+1];
 
 		// Init attachment properties
-		for (uint32_t i = 0; i < 2; ++i)
-		{
+		for (uint32_t i = 0; i < COLOR_ATTACHMENT_COUNT+1; i++) {
 			attachmentDescs[i].samples = VK_SAMPLE_COUNT_1_BIT;
 			attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 			attachmentDescs[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 			attachmentDescs[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-			if (i == 1)
-			{
+
+			if (i == COLOR_ATTACHMENT_COUNT) {
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 			}
-			else
-			{
+			else {
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			}
+
+            attachmentDescs[i].flags = 0;
 		}
 
-		// Formats
-		attachmentDescs[0].format = colorAttachment.format;
-		attachmentDescs[1].format = depthAttachment.format;
+		//Formats
+        attachmentDescs[0].format = positionAttachment.format;
+		attachmentDescs[1].format = colorAttachment.format;
+        attachmentDescs[2].format = normalAttachment.format;
+		attachmentDescs[3].format = depthAttachment.format;
 
 		std::vector<VkAttachmentReference> colorReferences;
-		colorReferences.push_back({ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+        for (uint32_t i = 0; i < COLOR_ATTACHMENT_COUNT; i++)
+		    colorReferences.push_back({ i, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 
 		VkAttachmentReference depthReference = {};
-		depthReference.attachment = 1;
+		depthReference.attachment = 3;
 		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 		VkSubpassDescription subpass = {};
@@ -972,8 +1028,8 @@ private:
 
 		VkRenderPassCreateInfo renderPassInfo = {};
 		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-		renderPassInfo.pAttachments = attachmentDescs.data();
-		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachmentDescs.size());
+		renderPassInfo.pAttachments = attachmentDescs;
+		renderPassInfo.attachmentCount = static_cast<uint32_t>(COLOR_ATTACHMENT_COUNT+1);
 		renderPassInfo.subpassCount = 1;
 		renderPassInfo.pSubpasses = &subpass;
 		renderPassInfo.dependencyCount = 2;
@@ -1094,25 +1150,25 @@ private:
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.pImmutableSamplers = nullptr;
         uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutBinding samplerLayoutBinding{};
         samplerLayoutBinding.binding = 1;
-        samplerLayoutBinding.descriptorCount = 1;
+        samplerLayoutBinding.descriptorCount = COLOR_ATTACHMENT_COUNT;
         samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         samplerLayoutBinding.pImmutableSamplers = nullptr;
         samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorSetLayoutBinding skyboxSamplerLayoutBinding{};
-        skyboxSamplerLayoutBinding.binding = 2;
-        skyboxSamplerLayoutBinding.descriptorCount = 6;
-        skyboxSamplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        skyboxSamplerLayoutBinding.pImmutableSamplers = nullptr;
-        skyboxSamplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutBinding lightBufferLayoutBinding{};
+        lightBufferLayoutBinding.binding = 2;
+        lightBufferLayoutBinding.descriptorCount = 1;
+        lightBufferLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        lightBufferLayoutBinding.pImmutableSamplers = nullptr;
+        lightBufferLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings = {uboLayoutBinding, samplerLayoutBinding, skyboxSamplerLayoutBinding};
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings = {uboLayoutBinding, samplerLayoutBinding, lightBufferLayoutBinding};
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1189,22 +1245,24 @@ private:
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_TRUE;
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendAttachmentState colorBlendAttachments[COLOR_ATTACHMENT_COUNT];
+        for (int i = 0; i < COLOR_ATTACHMENT_COUNT; i++) {
+            colorBlendAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            colorBlendAttachments[i].blendEnable = VK_TRUE;
+            colorBlendAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            colorBlendAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            colorBlendAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            colorBlendAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+        }
 
         VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
         colorBlending.logicOp = VK_LOGIC_OP_COPY;
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.attachmentCount = COLOR_ATTACHMENT_COUNT;
+        colorBlending.pAttachments = colorBlendAttachments;
         colorBlending.blendConstants[0] = 0.0f;
         colorBlending.blendConstants[1] = 0.0f;
         colorBlending.blendConstants[2] = 0.0f;
@@ -1319,22 +1377,24 @@ private:
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_TRUE;
-        colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
-        colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendAttachmentState colorBlendAttachments[COLOR_ATTACHMENT_COUNT];
+        for (int i = 0; i < COLOR_ATTACHMENT_COUNT; i++) {
+            colorBlendAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            colorBlendAttachments[i].blendEnable = VK_TRUE;
+            colorBlendAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            colorBlendAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            colorBlendAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            colorBlendAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+        }
 
         VkPipelineColorBlendStateCreateInfo colorBlending{};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
         colorBlending.logicOp = VK_LOGIC_OP_COPY;
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.attachmentCount = COLOR_ATTACHMENT_COUNT;
+        colorBlending.pAttachments = colorBlendAttachments;
         colorBlending.blendConstants[0] = 0.0f;
         colorBlending.blendConstants[1] = 0.0f;
         colorBlending.blendConstants[2] = 0.0f;
@@ -1516,16 +1576,19 @@ private:
     void createFramebuffers() {
         offScreenFramebuffers.resize(swapChainImageViews.size());
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
-            std::array<VkImageView, 2> attachments;
-            attachments[0] = colorAttachment.view;
-            attachments[1] = depthAttachment.view;
+            const size_t ATTACHMENT_COUNT = COLOR_ATTACHMENT_COUNT+1;
+            VkImageView attachments[ATTACHMENT_COUNT];
+            attachments[0] = positionAttachment.view;
+            attachments[1] = colorAttachment.view;
+            attachments[2] = normalAttachment.view;
+            attachments[3] = depthAttachment.view;
 
             VkFramebufferCreateInfo fbufCreateInfo = {};
             fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             fbufCreateInfo.pNext = NULL;
             fbufCreateInfo.renderPass = offScreenRenderPass;
-            fbufCreateInfo.pAttachments = attachments.data();
-            fbufCreateInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+            fbufCreateInfo.pAttachments = attachments;
+            fbufCreateInfo.attachmentCount = static_cast<uint32_t>(ATTACHMENT_COUNT);
             fbufCreateInfo.width = swapChainExtent.width;
             fbufCreateInfo.height = swapChainExtent.height;
             fbufCreateInfo.layers = 1;
@@ -1892,20 +1955,24 @@ private:
         std::vector<tinyobj::material_t> materials;
         std::string warn, err;
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str(), "models/lost_empire/")) {
             throw std::runtime_error(warn + err);
         }
+
+        //throw std::runtime_error(warn + err);
 
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
         for (const auto& shape : shapes) {
-            for (const auto& index : shape.mesh.indices) {
+            for (int i = shape.mesh.indices.size()-1; i >= 0; i--) {
+                const auto &index = shape.mesh.indices[i];
+
                 Vertex vertex{};
 
                 vertex.position = {
                     attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]
+                    attrib.vertices[3 * index.vertex_index + 2],
+                    attrib.vertices[3 * index.vertex_index + 1]
                 };
 
                 vertex.textureCoordinates = {
@@ -1917,15 +1984,13 @@ private:
                 
                 vertex.normal = {
                     attrib.normals[3 * index.normal_index + 0],
-                    attrib.normals[3 * index.normal_index + 1],
-                    attrib.normals[3 * index.normal_index + 2]
+                    attrib.normals[3 * index.normal_index + 2],
+                    attrib.normals[3 * index.normal_index + 1]
                 };
-                if (rand() % 200 == 0)
-                std::cout << vertex.normal.x << ' ' << vertex.normal.y << vertex.normal.z << '\n';
 
                 if (uniqueVertices.count(vertex) == 0) {
                     uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
+                    vertices.push_back({vertex.position, vertex.color, vertex.textureCoordinates, vertex.normal});
                 }
 
                 indices.push_back(uniqueVertices[vertex]);
@@ -2060,6 +2125,33 @@ private:
         }
     }
 
+    void createLightBuffer() {
+        std::vector<Light> lights;
+        for (int i = 0; i < 100; i++) {
+            int x = rand() % 41 - 20;
+            int y = rand() % 41 - 20;
+            int z = rand() % 20 + 10;
+
+            float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+            float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+            float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        
+            lights.push_back({{x, y, z}, {r, g, b}, 5.0f});
+        }
+
+        LightBufferObject lightBufferObject{};
+        lightBufferObject.lightCount = static_cast<uint32_t>(lights.size());
+        memcpy(lightBufferObject.lights, lights.data(), sizeof(Light)*lights.size());
+
+        VkDeviceSize bufferSize = sizeof(LightBufferObject);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightBuffer, lightBufferMemory);
+
+        vkMapMemory(device, lightBufferMemory, 0, bufferSize, 0, &lightBufferMapped);
+
+        memcpy(lightBufferMapped, &lightBufferObject, (size_t) bufferSize);
+    }
+
     void createOffScreenDescriptorPool() {
         std::array<VkDescriptorPoolSize, 2> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2079,12 +2171,13 @@ private:
     }
 
     void createOnScreenDescriptorPool() {
-        int textures = 1+6;
-        int sampledAttachments = 1;
-
-        std::array<VkDescriptorPoolSize, 1> poolSizes{};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*(textures+sampledAttachments));
+        std::array<VkDescriptorPoolSize, 3> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*COLOR_ATTACHMENT_COUNT);
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2172,22 +2265,26 @@ private:
         }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            VkDescriptorImageInfo compositionImageInfo{};
-            compositionImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            compositionImageInfo.imageView = colorAttachment.view;
-            compositionImageInfo.sampler = compositionSampler;
+            VkDescriptorBufferInfo uniformBufferInfo{};
+            uniformBufferInfo.buffer = uniformBuffers[i];
+            uniformBufferInfo.offset = 0;
+            uniformBufferInfo.range = sizeof(UniformBufferObject);
 
-            VkDescriptorImageInfo textureAtlasImageInfo{};
-            textureAtlasImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            textureAtlasImageInfo.imageView = textureAtlasImageView;
-            textureAtlasImageInfo.sampler = textureSampler;
+            VkDescriptorImageInfo compositionImageInfo[COLOR_ATTACHMENT_COUNT];
+            compositionImageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[0].imageView = positionAttachment.view;
+            compositionImageInfo[0].sampler = compositionSampler;
+            compositionImageInfo[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[1].imageView = colorAttachment.view;
+            compositionImageInfo[1].sampler = compositionSampler;
+            compositionImageInfo[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[2].imageView = normalAttachment.view;
+            compositionImageInfo[2].sampler = compositionSampler;
 
-            VkDescriptorImageInfo skyboxImagesInfo[6];
-            for (int j = 0; j < 6; j++) {
-                skyboxImagesInfo[j].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                skyboxImagesInfo[j].imageView = skyboxImageViews[j];
-                skyboxImagesInfo[j].sampler = skyboxSampler;
-            }
+            VkDescriptorBufferInfo lightBufferInfo{};
+            lightBufferInfo.buffer = lightBuffer;
+            lightBufferInfo.offset = 0;
+            lightBufferInfo.range = sizeof(LightBufferObject);
 
             std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
@@ -2195,25 +2292,78 @@ private:
             descriptorWrites[0].dstSet = onScreenDescriptorSets[i];
             descriptorWrites[0].dstBinding = 0;
             descriptorWrites[0].dstArrayElement = 0;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pImageInfo = &compositionImageInfo;
+            descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
 
             descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[1].dstSet = onScreenDescriptorSets[i];
             descriptorWrites[1].dstBinding = 1;
             descriptorWrites[1].dstArrayElement = 0;
             descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].pImageInfo = &textureAtlasImageInfo;
+            descriptorWrites[1].descriptorCount = COLOR_ATTACHMENT_COUNT;
+            descriptorWrites[1].pImageInfo = compositionImageInfo;
 
             descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[2].dstSet = onScreenDescriptorSets[i];
             descriptorWrites[2].dstBinding = 2;
             descriptorWrites[2].dstArrayElement = 0;
-            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[2].descriptorCount = 6;
-            descriptorWrites[2].pImageInfo = skyboxImagesInfo;
+            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pBufferInfo = &lightBufferInfo;
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        }
+    }
+
+    void recreateOnScreenDescriptorSets() {
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorBufferInfo uniformBufferInfo{};
+            uniformBufferInfo.buffer = uniformBuffers[i];
+            uniformBufferInfo.offset = 0;
+            uniformBufferInfo.range = sizeof(UniformBufferObject);
+
+            VkDescriptorImageInfo compositionImageInfo[COLOR_ATTACHMENT_COUNT];
+            compositionImageInfo[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[0].imageView = positionAttachment.view;
+            compositionImageInfo[0].sampler = compositionSampler;
+            compositionImageInfo[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[1].imageView = colorAttachment.view;
+            compositionImageInfo[1].sampler = compositionSampler;
+            compositionImageInfo[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            compositionImageInfo[2].imageView = normalAttachment.view;
+            compositionImageInfo[2].sampler = compositionSampler;
+
+            VkDescriptorBufferInfo lightBufferInfo{};
+            lightBufferInfo.buffer = uniformBuffers[i];
+            lightBufferInfo.offset = 0;
+            lightBufferInfo.range = sizeof(LightBufferObject);
+
+            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = onScreenDescriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
+
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = onScreenDescriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            descriptorWrites[1].descriptorCount = COLOR_ATTACHMENT_COUNT;
+            descriptorWrites[1].pImageInfo = compositionImageInfo;
+
+            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[2].dstSet = onScreenDescriptorSets[i];
+            descriptorWrites[2].dstBinding = 2;
+            descriptorWrites[2].dstArrayElement = 0;
+            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pBufferInfo = &lightBufferInfo;
 
             vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
@@ -2359,12 +2509,13 @@ private:
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = swapChainExtent;
 
-        std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-        clearValues[1].depthStencil = {1.0f, 0};
+        VkClearValue clearValues[COLOR_ATTACHMENT_COUNT+1];
+        for (int i = 0; i < COLOR_ATTACHMENT_COUNT; i++)
+            clearValues[i].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        clearValues[COLOR_ATTACHMENT_COUNT].depthStencil = {1.0f, 0};
 
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
+        renderPassInfo.clearValueCount = static_cast<uint32_t>(COLOR_ATTACHMENT_COUNT+1);
+        renderPassInfo.pClearValues = clearValues;
         
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -2433,7 +2584,7 @@ private:
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
         clearValues[1].depthStencil = {1.0f, 0};
 
-        renderPassInfo.clearValueCount = 2;//static_cast<uint32_t>(clearValues.size());
+        renderPassInfo.clearValueCount = COLOR_ATTACHMENT_COUNT;//static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues = clearValues.data();
         
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -2537,8 +2688,18 @@ private:
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
+    void updateLightBuffer() {
+        LightBufferObject lightBufferObject{};
+        lightBufferObject.lightCount = static_cast<uint32_t>(lights.size());
+        lightBufferObject.lights[0] = lights[0];
+
+        VkDeviceSize bufferSize = sizeof(LightBufferObject);
+
+        memcpy(lightBufferMapped, &lightBufferObject, (size_t) bufferSize);
+    }
+
     void update() {
-        // std::cout << viewDirection.x << ' ' << viewDirection.y << ' ' << viewDirection.z << '\n';
+        
     }
 
     void drawFrame() {
@@ -2557,6 +2718,8 @@ private:
 
         {
         updateUniformBuffer(currentFrame);
+        // if (isLightBufferChanged)
+        //     updateLightBuffer();
 
         vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
