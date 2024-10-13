@@ -1,0 +1,73 @@
+Underground city in the 
+"Lost Empire" area from the Vokselia Minecraft world
+http://vokselia.com
+CC BY 3.0 License http://creativecommons.org/licenses/by/3.0/
+
+224,998 faces
+449,992 vertices 
+after loading and welding colocated vertices
+
+------------------
+Converted to OBJ by Morgan McGuire using Mineways (http://mineways.com)
+
+
+// for (int i = 0; i < lights.size(); i++) {
+        //     //Top of cube
+        //     lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     //Bottom of cube
+        //     lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+        //     lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+
+        //     //Positive x (front)
+        //     lightIndices.push_back(i*8+1);
+        //     lightIndices.push_back(i*6+3);
+        //     lightIndices.push_back(i*6+5);
+        //     lightIndices.push_back(i*6+7);
+        //     lightIndices.push_back(i*6+5);
+        //     lightIndices.push_back(i*6+3);
+
+        //     //Negative x (back)
+        //     lightIndices.push_back(i*6+0);
+        //     lightIndices.push_back(i*6+2);
+        //     lightIndices.push_back(i*6+4);
+        //     lightIndices.push_back(i*6+6);
+        //     lightIndices.push_back(i*6+4);
+        //     lightIndices.push_back(i*6+2);
+
+        //     //Positive y (left)
+        //     lightIndices.push_back(i*6+0);
+        //     lightIndices.push_back(i*6+1);
+        //     lightIndices.push_back(i*6+2);
+        //     lightIndices.push_back(i*6+3);
+        //     lightIndices.push_back(i*6+2);
+        //     lightIndices.push_back(i*6+1);
+
+        //     //Negative y (right)
+        //     lightIndices.push_back(i*6+4);
+        //     lightIndices.push_back(i*6+5);
+        //     lightIndices.push_back(i*6+6);
+        //     lightIndices.push_back(i*6+7);
+        //     lightIndices.push_back(i*6+6);
+        //     lightIndices.push_back(i*6+5);
+
+        //     //Positive z (top)
+        //     lightIndices.push_back(i*6+1);
+        //     lightIndices.push_back(i*6+0);
+        //     lightIndices.push_back(i*6+2);
+        //     lightIndices.push_back(i*6+3);
+        //     lightIndices.push_back(i*6+2);
+        //     lightIndices.push_back(i*6+0);
+
+        //     //Negative z (bottom)
+        //     lightIndices.push_back(i*6+4);
+        //     lightIndices.push_back(i*6+7);
+        //     lightIndices.push_back(i*6+5);
+        //     lightIndices.push_back(i*6+6);
+        //     lightIndices.push_back(i*6+5);
+        //     lightIndices.push_back(i*6+7);
+        // }
