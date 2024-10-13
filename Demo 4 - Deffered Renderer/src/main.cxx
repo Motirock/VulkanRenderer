@@ -5,7 +5,7 @@ By Victor Monnier
 */
 
 /* Quick Use
-glslc shaders/composition.vert -o shaders/composition.vert.spv && glslc shaders/composition.frag -o shaders/composition.frag.spv && glslc shaders/main.vert -o shaders/main.vert.spv && glslc shaders/main.frag -o shaders/main.frag.spv && glslc shaders/ocean.vert -o shaders/ocean.vert.spv && glslc shaders/ocean.frag -o shaders/ocean.frag.spv   && glslc shaders/skybox.vert -o shaders/skybox.vert.spv && glslc shaders/skybox.frag -o shaders/skybox.frag.spv && g++ -c -std=c++17 -O3 src/*.cxx -Iinclude && g++ *.o -o bin/main -Llib -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi && ./bin/main
+glslc shaders/composition.vert -o shaders/composition.vert.spv && glslc shaders/composition.frag -o shaders/composition.frag.spv && glslc shaders/main.vert -o shaders/main.vert.spv && glslc shaders/main.frag -o shaders/main.frag.spv && glslc shaders/light.vert -o shaders/light.vert.spv && glslc shaders/light.frag -o shaders/light.frag.spv && glslc shaders/ocean.vert -o shaders/ocean.vert.spv && glslc shaders/ocean.frag -o shaders/ocean.frag.spv   && glslc shaders/skybox.vert -o shaders/skybox.vert.spv && glslc shaders/skybox.frag -o shaders/skybox.frag.spv && g++ -c -std=c++17 -O3 src/*.cxx -Iinclude && g++ *.o -o bin/main -Llib -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi && ./bin/main
 */
 
 /* NO DEBUG
@@ -164,9 +164,10 @@ struct Light {
     float strength; //!= 0
 };
 
+const uint32_t MAX_LIGHTS = 100;
 struct LightBufferObject {
     int32_t lightCount;
-    alignas(16) Light lights[100];
+    alignas(16) Light lights[MAX_LIGHTS];
 };
 
 struct FrameBufferAttachment {
@@ -211,7 +212,7 @@ private:
     std::vector<VkImageView> swapChainImageViews;
     std::vector<VkFramebuffer> swapChainFramebuffers;
 
-    std::vector<VkFramebuffer> offScreenFramebuffers;
+    std::vector<VkFramebuffer> gBuffers;
 
     FrameBufferAttachment positionAttachment;
     FrameBufferAttachment colorAttachment;
@@ -227,8 +228,8 @@ private:
     VkPipelineLayout mainPipelineLayout;
     VkPipeline mainPipeline;
 
-    // VkPipelineLayout lightPipelineLayout;
-    // VkPipeline lightPipeline;
+    VkPipelineLayout lightPipelineLayout;
+    VkPipeline lightPipeline;
 
     VkPipelineLayout skyboxPipelineLayout;
     VkPipeline skyboxPipeline;
@@ -263,6 +264,16 @@ private:
     VkDeviceMemory indexBufferMemory;
     void *vertexData;
     void *indexData;
+
+    bool isLightsChanged = false;
+    std::vector<Vertex> lightVertices;
+    std::vector<uint32_t> lightIndices;
+    VkBuffer lightVertexBuffer;
+    VkBuffer lightIndexBuffer;
+    VkDeviceMemory lightVertexBufferMemory;
+    VkDeviceMemory lightIndexBufferMemory;
+    void *lightVertexBufferMapped;
+    void *lightIndexBufferMapped;
 
     VkBuffer skyboxVertexBuffer;
     VkDeviceMemory skyboxVertexBufferMemory;
@@ -318,7 +329,7 @@ private:
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-        window = glfwCreateWindow(WIDTH, HEIGHT, "VKMC", nullptr, nullptr);
+        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan Renderer", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
         glfwSetMouseButtonCallback(window, mouseButtonCallback);
@@ -427,6 +438,7 @@ private:
         createOnScreenDescriptorSetLayout();
 
         createMainPipeline();
+        createLightPipeline();
         createSkyboxPipeline();
         createCompositionPipeline();
 
@@ -445,14 +457,13 @@ private:
         createCompositionSampler();
 
         loadModel();
-        createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
-        createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
 
+        createLightVertexBuffer();
+        createLightIndexBuffer();
         createSkyboxVertexBuffer();
         createCompositionVertexBuffer();
 
         createUniformBuffers();
-
         createLightBuffer();
 
         createOffScreenDescriptorPool();
@@ -472,6 +483,7 @@ private:
     float scrollAmount = 0;
     bool lockedIn = false;
     bool cursorJustEntered = false;
+    bool xPressed = false, zPressed = false, cPressed = false;
     void input() {
         float speed = this->speed;
         float turningSensitivity = this->turningSensitivity*FOV/90.0f;
@@ -505,6 +517,33 @@ private:
             viewAngles.x -= turningSensitivity;
         if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
             viewAngles.x += turningSensitivity;
+
+        if (!xPressed && glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS && lights.size() < 100) {
+            float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+            float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+            float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+
+            lights.push_back(Light{
+                glm::vec3(cameraPosition.x, cameraPosition.y, cameraPosition.z),
+                glm::vec3(r, g, b),
+                1.0f
+            });
+
+            isLightsChanged = true;
+        }
+        xPressed = glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS;
+
+        if (!zPressed && glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS && lights.size() > 0) {
+            lights.pop_back();
+            isLightsChanged = true;
+        }
+        zPressed = glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS;;
+
+        if (!cPressed && glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+            lights.clear();
+            isLightsChanged = true;
+        }
+        cPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;;
 
         bool lockingIn = !lockedIn && glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS;
         bool unlocking = lockedIn && glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
@@ -564,8 +603,8 @@ private:
                 averageFrameTime += frameTime/TPS;
                 
                 if (ticks % TPS == 0) {
-                    uint32_t vertexCount = vertices.size();
-                    uint32_t indexCount = indices.size();
+                    //uint32_t vertexCount = vertices.size();
+                    uint32_t indexCount = indices.size()+lightIndices.size()+36;
                     
                     std::cout << "Frame time: " << averageFrameTime <<
                         ", estimated maximum FPS: " << (int) (1.0f/averageFrameTime) << "\n"
@@ -590,7 +629,7 @@ private:
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
 
-        for (auto framebuffer : offScreenFramebuffers) {
+        for (auto framebuffer : gBuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
 
@@ -613,6 +652,9 @@ private:
 
         vkDestroyPipeline(device, mainPipeline, nullptr);
         vkDestroyPipelineLayout(device, mainPipelineLayout, nullptr);
+
+        vkDestroyPipeline(device, lightPipeline, nullptr);
+        vkDestroyPipelineLayout(device, lightPipelineLayout, nullptr);
 
         vkDestroyPipeline(device, skyboxPipeline, nullptr);
         vkDestroyPipelineLayout(device, skyboxPipelineLayout, nullptr);
@@ -659,6 +701,12 @@ private:
 
         vkDestroyBuffer(device, indexBuffer, nullptr);
         vkFreeMemory(device, indexBufferMemory, nullptr);
+
+        vkDestroyBuffer(device, lightVertexBuffer, nullptr);
+        vkFreeMemory(device, lightVertexBufferMemory, nullptr);
+
+        vkDestroyBuffer(device, lightIndexBuffer, nullptr);
+        vkFreeMemory(device, lightIndexBufferMemory, nullptr);
 
         vkDestroyBuffer(device, skyboxVertexBuffer, nullptr);
         vkFreeMemory(device, skyboxVertexBufferMemory, nullptr);
@@ -737,7 +785,7 @@ private:
 
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "VKMC";
+        appInfo.pApplicationName = "Vulkan Renderer";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -1311,6 +1359,138 @@ private:
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
 
+    void createLightPipeline() {
+        auto vertShaderCode = readFile("shaders/light.vert.spv");
+        auto fragShaderCode = readFile("shaders/light.frag.spv");
+
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+        std::array<VkVertexInputBindingDescription, 1> bindingDescriptions = {Vertex::getBindingDescription()};
+        std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions = Vertex::getAttributeDescriptions();
+
+        vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescriptions.size());;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = bindingDescriptions.data();
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.minSampleShading = 0.0f;
+
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.stencilTestEnable = VK_FALSE;
+
+        VkPipelineColorBlendAttachmentState colorBlendAttachments[COLOR_ATTACHMENT_COUNT];
+        for (int i = 0; i < COLOR_ATTACHMENT_COUNT; i++) {
+            colorBlendAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            colorBlendAttachments[i].blendEnable = VK_TRUE;
+            colorBlendAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            colorBlendAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            colorBlendAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+            colorBlendAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            colorBlendAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            colorBlendAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+
+        VkPipelineColorBlendStateCreateInfo colorBlending{};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.logicOpEnable = VK_FALSE;
+        colorBlending.logicOp = VK_LOGIC_OP_COPY;
+        colorBlending.attachmentCount = COLOR_ATTACHMENT_COUNT;
+        colorBlending.pAttachments = colorBlendAttachments;
+        colorBlending.blendConstants[0] = 0.0f;
+        colorBlending.blendConstants[1] = 0.0f;
+        colorBlending.blendConstants[2] = 0.0f;
+        colorBlending.blendConstants[3] = 0.0f;
+
+        std::vector<VkDynamicState> dynamicStates = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_SCISSOR
+        };
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+        dynamicState.pDynamicStates = dynamicStates.data();
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &offScreenDescriptorSetLayout;
+
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &lightPipelineLayout) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create pipeline layout!");
+        }
+
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = lightPipelineLayout;
+        pipelineInfo.renderPass = offScreenRenderPass;
+        pipelineInfo.subpass = 0;
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &lightPipeline) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create graphics pipeline!");
+        }
+
+        vkDestroyShaderModule(device, fragShaderModule, nullptr);
+        vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    }
+
     void createSkyboxPipeline() {
         auto vertShaderCode = readFile("shaders/skybox.vert.spv");
         auto fragShaderCode = readFile("shaders/skybox.frag.spv");
@@ -1574,7 +1754,7 @@ private:
     }
 
     void createFramebuffers() {
-        offScreenFramebuffers.resize(swapChainImageViews.size());
+        gBuffers.resize(swapChainImageViews.size());
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             const size_t ATTACHMENT_COUNT = COLOR_ATTACHMENT_COUNT+1;
             VkImageView attachments[ATTACHMENT_COUNT];
@@ -1593,7 +1773,7 @@ private:
             fbufCreateInfo.height = swapChainExtent.height;
             fbufCreateInfo.layers = 1;
             
-            if (vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &offScreenFramebuffers[i]) != VK_SUCCESS) {
+            if (vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &gBuffers[i]) != VK_SUCCESS) {
                 throw std::runtime_error("Failed to create framebuffer!");
             }
         }
@@ -1996,6 +2176,9 @@ private:
                 indices.push_back(uniqueVertices[vertex]);
             }
         }
+
+        createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
+        createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
     }
 
     void createVertexBuffer(VkBuffer &vertexBuffer, VkDeviceMemory &vertexBufferMemory, VkDeviceSize bufferSize, void *vertexData) {
@@ -2014,6 +2197,40 @@ private:
 
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
+    void createIndexBuffer(VkBuffer &indexBuffer, VkDeviceMemory &indexBufferMemory, VkDeviceSize bufferSize, void *indexData) {   
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        void *data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+            memcpy(data, indexData, (size_t) bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    } 
+
+    void createLightVertexBuffer() {
+        VkDeviceSize bufferSize = sizeof(Vertex)*12*MAX_LIGHTS;
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightVertexBuffer, lightVertexBufferMemory);
+
+        vkMapMemory(device, lightVertexBufferMemory, 0, bufferSize, 0, &lightVertexBufferMapped);
+    }
+
+    void createLightIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(uint32_t)*36*MAX_LIGHTS;
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightIndexBuffer, lightIndexBufferMemory);
+
+        vkMapMemory(device, lightIndexBufferMemory, 0, bufferSize, 0, &lightIndexBufferMapped);
     }
 
     void createSkyboxVertexBuffer() {
@@ -2093,24 +2310,6 @@ private:
         createVertexBuffer(compositionVertexBuffer, compositionVertexBufferMemory, bufferSize, vertices.data());
     }
 
-    void createIndexBuffer(VkBuffer &indexBuffer, VkDeviceMemory &indexBufferMemory, VkDeviceSize bufferSize, void *indexData) {   
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void *data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-            memcpy(data, indexData, (size_t) bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    } 
-
     void createUniformBuffers() {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
@@ -2126,18 +2325,17 @@ private:
     }
 
     void createLightBuffer() {
-        std::vector<Light> lights;
-        for (int i = 0; i < 100; i++) {
-            int x = rand() % 41 - 20;
-            int y = rand() % 41 - 20;
-            int z = rand() % 20 + 10;
+        // for (int i = 0; i < MAX_LIGHTS; i++) {
+        //     int x = rand() % 41 - 20;
+        //     int y = rand() % 41 - 20;
+        //     int z = rand() % 20 + 10;
 
-            float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-            float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-            float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        //     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        //     float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+        //     float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
         
-            lights.push_back({{x, y, z}, {r, g, b}, 5.0f});
-        }
+        //     lights.push_back({{x, y, z}, {r, g, b}, 1.0f});
+        // }
 
         LightBufferObject lightBufferObject{};
         lightBufferObject.lightCount = static_cast<uint32_t>(lights.size());
@@ -2150,6 +2348,70 @@ private:
         vkMapMemory(device, lightBufferMemory, 0, bufferSize, 0, &lightBufferMapped);
 
         memcpy(lightBufferMapped, &lightBufferObject, (size_t) bufferSize);
+
+        for (int i = 0; i < lights.size(); i++) {
+            //Bottom of cube
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            //Top of cube
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+
+            //Positive x (front)
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+3);
+
+            //Negative x (back)
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+4);
+
+            //Positive y (left)
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+7);
+
+            //Negative y (right)
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+4);
+
+            //Positive z (top)
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+7);
+
+            //Negative z (bottom)
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+3);
+        }
+
+        memcpy(lightVertexBufferMapped, lightVertices.data(), sizeof(Vertex)*lightVertices.size());
+        memcpy(lightIndexBufferMapped, lightIndices.data(), sizeof(uint32_t)*lightIndices.size());
     }
 
     void createOffScreenDescriptorPool() {
@@ -2505,7 +2767,7 @@ private:
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = offScreenRenderPass;
-        renderPassInfo.framebuffer = offScreenFramebuffers[imageIndex];
+        renderPassInfo.framebuffer = gBuffers[imageIndex];
         renderPassInfo.renderArea.offset = {0, 0};
         renderPassInfo.renderArea.extent = swapChainExtent;
 
@@ -2539,21 +2801,31 @@ private:
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipeline);
-			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, offsets);
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
             vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             }
 
             {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline);
+            VkBuffer vertexBuffers[] = {lightVertexBuffer};
+            VkDeviceSize offsets[] = {0};
 
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lightPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
+			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lightPipeline);
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, lightIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(lightIndices.size()), 1, 0, 0, 0);
+            }
+
+            {
             VkBuffer vertexBuffers[] = {skyboxVertexBuffer};
             VkDeviceSize offsets[] = {0};
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline);
-			vkCmdBindVertexBuffers(commandBuffer, 0, 1, &skyboxVertexBuffer, offsets);
+			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
             vkCmdDraw(commandBuffer, static_cast<uint32_t>(36), 1, 0, 0);         
             }      
@@ -2691,11 +2963,82 @@ private:
     void updateLightBuffer() {
         LightBufferObject lightBufferObject{};
         lightBufferObject.lightCount = static_cast<uint32_t>(lights.size());
-        lightBufferObject.lights[0] = lights[0];
+        for (int i = 0; i < lights.size(); i++) {
+            lightBufferObject.lights[i] = lights[i];
+        }
 
         VkDeviceSize bufferSize = sizeof(LightBufferObject);
 
         memcpy(lightBufferMapped, &lightBufferObject, (size_t) bufferSize);
+        
+        lightVertices.clear();
+        lightIndices.clear();
+
+        for (int i = 0; i < lights.size(); i++) {
+            //Bottom of cube
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f, -0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            //Top of cube
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f,  0.5f), lights[i].color, {0.0f, 0.0f}, {0.0f, 0.0f, 0.0f} });
+
+            //Positive x (front)
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+3);
+
+            //Negative x (back)
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+4);
+
+            //Positive y (left)
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+7);
+
+            //Negative y (right)
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+4);
+
+            //Positive z (top)
+            lightIndices.push_back(i*8+5);
+            lightIndices.push_back(i*8+7);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+6);
+            lightIndices.push_back(i*8+4);
+            lightIndices.push_back(i*8+7);
+
+            //Negative z (bottom)
+            lightIndices.push_back(i*8+3);
+            lightIndices.push_back(i*8+1);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+0);
+            lightIndices.push_back(i*8+2);
+            lightIndices.push_back(i*8+3);
+        }
+
+        memcpy(lightVertexBufferMapped, lightVertices.data(), sizeof(Vertex)*lightVertices.size());
+        memcpy(lightIndexBufferMapped, lightIndices.data(), sizeof(uint32_t)*lightIndices.size());
+
+        isLightsChanged = false;
     }
 
     void update() {
@@ -2718,8 +3061,8 @@ private:
 
         {
         updateUniformBuffer(currentFrame);
-        // if (isLightBufferChanged)
-        //     updateLightBuffer();
+        if (isLightsChanged)
+            updateLightBuffer();
 
         vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
