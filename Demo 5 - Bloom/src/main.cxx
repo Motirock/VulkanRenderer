@@ -5,7 +5,7 @@ By Victor Monnier
 */
 
 /* Quick Use
-glslc shaders/composition.vert -o shaders/composition.vert.spv && glslc shaders/composition.frag -o shaders/composition.frag.spv && glslc shaders/main.vert -o shaders/main.vert.spv && glslc shaders/main.frag -o shaders/main.frag.spv && glslc shaders/light.vert -o shaders/light.vert.spv && glslc shaders/light.frag -o shaders/light.frag.spv && glslc shaders/ocean.vert -o shaders/ocean.vert.spv && glslc shaders/ocean.frag -o shaders/ocean.frag.spv   && glslc shaders/skybox.vert -o shaders/skybox.vert.spv && glslc shaders/skybox.frag -o shaders/skybox.frag.spv && g++ -c -std=c++17 -O3 src/*.cxx -Iinclude && g++ *.o -o bin/main -Llib -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi && ./bin/main
+glslc shaders/composition.vert -o shaders/composition.vert.spv && glslc shaders/composition.frag -o shaders/composition.frag.spv && glslc shaders/main.vert -o shaders/main.vert.spv && glslc shaders/main.frag -o shaders/main.frag.spv && glslc shaders/light.vert -o shaders/light.vert.spv && glslc shaders/light.frag -o shaders/light.frag.spv && glslc shaders/ocean.vert -o shaders/ocean.vert.spv && glslc shaders/ocean.frag -o shaders/ocean.frag.spv && glslc shaders/skybox.vert -o shaders/skybox.vert.spv && glslc shaders/skybox.frag -o shaders/skybox.frag.spv && glslc shaders/bloom.comp -o shaders/bloom.comp.spv && g++ -c -std=c++17 -O3 src/*.cxx -Iinclude && g++ *.o -o bin/main -Llib -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi && ./bin/main
 */
 
 /* NO DEBUG
@@ -23,12 +23,15 @@ g++ -c -std=c++17 -O3 src/*.cxx -Iinclude && g++ *.o -o bin/main -Llib -lglfw -l
 /* SHADER COMPILATION
 glslc shaders/main.vert -o shaders/main.vert.spv
 glslc shaders/main.frag -o shaders/main.frag.spv
+glslc shaders/light.vert -o shaders/light.vert.spv
+glslc shaders/light.frag -o shaders/light.frag.spv
 glslc shaders/ocean.vert -o shaders/ocean.vert.spv
-glslc shaders/ocean.frag -o shaders/ocean.frag.spv  
+glslc shaders/ocean.frag -o shaders/ocean.frag.spv
 glslc shaders/skybox.vert -o shaders/skybox.vert.spv
 glslc shaders/skybox.frag -o shaders/skybox.frag.spv
 glslc shaders/composition.vert -o shaders/composition.vert.spv
 glslc shaders/composition.frag -o shaders/composition.frag.spv
+glslc shaders/bloom.comp -o shaders/bloom.comp.spv
 */
 
 #define GLFW_INCLUDE_VULKAN
@@ -132,11 +135,11 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 }
 
 struct QueueFamilyIndices {
-    std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> graphicsAndComputeFamily;
     std::optional<uint32_t> presentFamily;
 
     bool isComplete() {
-        return graphicsFamily.has_value() && presentFamily.has_value();
+        return graphicsAndComputeFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -204,6 +207,7 @@ private:
     VkDevice device;
 
     VkQueue graphicsQueue;
+    VkQueue computeQueue;
     VkQueue presentQueue;
 
     VkSwapchainKHR swapChain;
@@ -222,9 +226,14 @@ private:
     FrameBufferAttachment depthAttachment;
     const uint32_t COLOR_ATTACHMENT_COUNT = 4;
 
+    VkImage bloomImage;
+    VkDeviceMemory bloomImageMemory;
+    VkImageView bloomImageView;
+
     VkRenderPass offScreenRenderPass;
     VkRenderPass onScreenRenderPass;
     VkDescriptorSetLayout offScreenDescriptorSetLayout;
+    VkDescriptorSetLayout computeDescriptorSetLayout;
     VkDescriptorSetLayout onScreenDescriptorSetLayout;
 
     VkPipelineLayout mainPipelineLayout;
@@ -235,6 +244,11 @@ private:
 
     VkPipelineLayout skyboxPipelineLayout;
     VkPipeline skyboxPipeline;
+
+    VkSpecializationInfo bloomSpecilizationConstants;
+    void *bloomSpecilizationData;
+    VkPipelineLayout bloomPipelineLayout;
+    VkPipeline bloomPipeline;
 
     VkPipelineLayout compositionPipelineLayout;
     VkPipeline compositionPipeline;
@@ -295,18 +309,23 @@ private:
     void *lightBufferMapped;
 
     VkDescriptorPool offScreenDescriptorPool;
+    VkDescriptorPool computeDescriptorPool;
     VkDescriptorPool onScreenDescriptorPool;
     std::vector<VkDescriptorSet> offScreenDescriptorSets;
+    std::vector<VkDescriptorSet> computeDescriptorSets;
     std::vector<VkDescriptorSet> onScreenDescriptorSets;
 
     std::vector<VkCommandBuffer> commandBuffers;
+    std::vector<VkCommandBuffer> computeCommandBuffers;
     std::vector<VkCommandBuffer> offScreenCommandBuffers;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> offScreenRenderFinishedSemaphores;
+    std::vector<VkSemaphore> computeFinishedSemaphores;
     std::vector<VkSemaphore> onScreenRenderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
-    std::vector<VkFence> deferredFences;
+    std::vector<VkFence> computeInFlightFences;
+    std::vector<VkFence> deferredInFlightFences;
     uint32_t currentFrame = 0;
 
     float time;
@@ -419,41 +438,51 @@ private:
         createAttachment(
 			VK_FORMAT_R16G16B16A16_SFLOAT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&positionAttachment);
+			&positionAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&colorAttachment);
+			&colorAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&normalAttachment);
+			&normalAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&extraAttachment);
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			&extraAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
 		createAttachment(
 			findDepthFormat(),
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			&depthAttachment);
+			&depthAttachment,
+            swapChainExtent.width, swapChainExtent.height);
+
         createOffScreenRenderPass();
         createOnScreenRenderPass();
 
         createOffScreenDescriptorSetLayout();
+        createComputeDescriptorSetLayout();
         createOnScreenDescriptorSetLayout();
 
         createMainPipeline();
         createLightPipeline();
         createSkyboxPipeline();
+        createBloomPipeline();
         createCompositionPipeline();
 
         createCommandPool();
 
         createFramebuffers();
+
+        createBloomImage();
 
         createTextureAtlasImage();
         createTextureAtlasImageView();
@@ -476,11 +505,14 @@ private:
         createLightBuffer();
 
         createOffScreenDescriptorPool();
+        createComputeDescriptorPool();
         createOnScreenDescriptorPool();
         createOffScreenDescriptorSets();
+        createComputeDescriptorSets();
         createOnScreenDescriptorSets();
 
         createCommandBuffers();
+        createComputeCommandBuffers();
 
         createSyncObjects();
     }
@@ -659,6 +691,10 @@ private:
         extraAttachment.cleanup(device);
         depthAttachment.cleanup(device);
 
+        vkDestroyImageView(device, bloomImageView, nullptr);
+        vkDestroyImage(device, bloomImage, nullptr);
+        vkFreeMemory(device, bloomImageMemory, nullptr);
+
         vkDestroySwapchainKHR(device, swapChain, nullptr);
     }
 
@@ -676,6 +712,9 @@ private:
         vkDestroyPipeline(device, skyboxPipeline, nullptr);
         vkDestroyPipelineLayout(device, skyboxPipelineLayout, nullptr);
 
+        vkDestroyPipeline(device, bloomPipeline, nullptr);
+        vkDestroyPipelineLayout(device, bloomPipelineLayout, nullptr);
+
         vkDestroyPipeline(device, compositionPipeline, nullptr);
         vkDestroyPipelineLayout(device, compositionPipelineLayout, nullptr);
 
@@ -691,19 +730,19 @@ private:
         vkFreeMemory(device, lightBufferMemory, nullptr);
 
         vkDestroyDescriptorPool(device, offScreenDescriptorPool, nullptr);
+        vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
         vkDestroyDescriptorPool(device, onScreenDescriptorPool, nullptr);
 
-        vkDestroySampler(device, textureSampler, nullptr);
         vkDestroyImageView(device, textureAtlasImageView, nullptr);
-
         vkDestroyImage(device, textureAtlasImage, nullptr);
         vkFreeMemory(device, textureAtlasImageMemory, nullptr);
+
+        vkDestroySampler(device, textureSampler, nullptr);
 
         vkDestroySampler(device, skyboxSampler, nullptr);
 
         for (int i = 0; i < 6; i++) {
             vkDestroyImageView(device, skyboxImageViews[i], nullptr);
-
             vkDestroyImage(device, skyboxImages[i], nullptr);
             vkFreeMemory(device, skyboxImagesMemories[i], nullptr);
         }
@@ -711,6 +750,7 @@ private:
         vkDestroySampler(device, compositionSampler, nullptr);
 
         vkDestroyDescriptorSetLayout(device, offScreenDescriptorSetLayout, nullptr);
+        vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
         vkDestroyDescriptorSetLayout(device, onScreenDescriptorSetLayout, nullptr);
 
         vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -732,11 +772,13 @@ private:
         vkFreeMemory(device, compositionVertexBufferMemory, nullptr);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroySemaphore(device, offScreenRenderFinishedSemaphores[i], nullptr);
-            vkDestroySemaphore(device, onScreenRenderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+            vkDestroySemaphore(device, offScreenRenderFinishedSemaphores[i], nullptr);
+            vkDestroySemaphore(device, computeFinishedSemaphores[i], nullptr);
+            vkDestroySemaphore(device, onScreenRenderFinishedSemaphores[i], nullptr);
             vkDestroyFence(device, inFlightFences[i], nullptr);
-            vkDestroyFence(device, deferredFences[i], nullptr);
+            vkDestroyFence(device, computeInFlightFences[i], nullptr);
+            vkDestroyFence(device, deferredInFlightFences[i], nullptr);
         }
 
         vkDestroyCommandPool(device, commandPool, nullptr);
@@ -772,31 +814,40 @@ private:
         createAttachment(
 			VK_FORMAT_R16G16B16A16_SFLOAT,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&positionAttachment);
+			&positionAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&colorAttachment);
+			&colorAttachment,
+            swapChainExtent.width, swapChainExtent.height);
             
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
 			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&normalAttachment);
+			&normalAttachment,
+            swapChainExtent.width, swapChainExtent.height);
 
         createAttachment(
 			VK_FORMAT_R8G8B8A8_UNORM,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-			&extraAttachment);    
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			&extraAttachment,
+            swapChainExtent.width, swapChainExtent.height);    
 
 		createAttachment(
 			findDepthFormat(),
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			&depthAttachment);
+			&depthAttachment,
+            swapChainExtent.width, swapChainExtent.height);
+
+        vkDestroyImage(device, bloomImage, nullptr);
+        vkDestroyImageView(device, bloomImageView, nullptr);
 
         createImageViews();
         createFramebuffers();
 
+        recreateComputeDescriptorSets();
         recreateOnScreenDescriptorSets();
     }
 
@@ -891,7 +942,7 @@ private:
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-        std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+        std::set<uint32_t> uniqueQueueFamilies = {indices.graphicsAndComputeFamily.value(), indices.presentFamily.value()};
 
         float queuePriority = 1.0f;
         for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -904,8 +955,6 @@ private:
         }
 
         VkPhysicalDeviceFeatures deviceFeatures{};
-        deviceFeatures.samplerAnisotropy = VK_TRUE;
-        deviceFeatures.sampleRateShading = VK_FALSE;
 
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -929,7 +978,8 @@ private:
             throw std::runtime_error("Failed to create logical device!");
         }
 
-        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.graphicsAndComputeFamily.value(), 0, &computeQueue);
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
@@ -957,9 +1007,9 @@ private:
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-        uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+        uint32_t queueFamilyIndices[] = {indices.graphicsAndComputeFamily.value(), indices.presentFamily.value()};
 
-        if (indices.graphicsFamily != indices.presentFamily) {
+        if (indices.graphicsAndComputeFamily != indices.presentFamily) {
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
@@ -992,7 +1042,7 @@ private:
         }
     }
 
-    void createAttachment(VkFormat format, VkImageUsageFlagBits usage, FrameBufferAttachment *attachment) {
+    void createAttachment(VkFormat format, uint32_t usage, FrameBufferAttachment *attachment, uint32_t width, uint32_t height) {
 		VkImageAspectFlags aspectMask = 0;
 		VkImageLayout imageLayout;
 
@@ -1029,6 +1079,14 @@ private:
         }
 	}
 
+    void createBloomImage() {
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bloomImage, bloomImageMemory);
+    
+        transitionImageLayout(bloomImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+
+        bloomImageView = createImageView(bloomImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+    }
+
     void createOffScreenRenderPass() {
         VkAttachmentDescription attachmentDescs[COLOR_ATTACHMENT_COUNT+1];
 
@@ -1044,6 +1102,10 @@ private:
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 			}
+            else if (i == COLOR_ATTACHMENT_COUNT-1) {
+                attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
+            }
 			else {
 				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1108,7 +1170,7 @@ private:
 
     void createOnScreenRenderPass() {
         std::array<VkAttachmentDescription, 1> attachments = {};
-        // Color attachment
+        //Color attachment
         attachments[0].format = swapChainImageFormat;
         attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1195,6 +1257,32 @@ private:
         layoutInfo.pBindings = bindings.data();
 
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &offScreenDescriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create descriptor set layout!");
+        }
+    }
+
+    void createComputeDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding bloomImageInputLayoutBinding{};
+        bloomImageInputLayoutBinding.binding = 0;
+        bloomImageInputLayoutBinding.descriptorCount = 1;
+        bloomImageInputLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bloomImageInputLayoutBinding.pImmutableSamplers = nullptr;
+        bloomImageInputLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutBinding bloomImageOutputLayoutBinding{};
+        bloomImageOutputLayoutBinding.binding = 1;
+        bloomImageOutputLayoutBinding.descriptorCount = 1;
+        bloomImageOutputLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bloomImageOutputLayoutBinding.pImmutableSamplers = nullptr;
+        bloomImageOutputLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings = {bloomImageInputLayoutBinding, bloomImageOutputLayoutBinding};
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create descriptor set layout!");
         }
     }
@@ -1628,6 +1716,46 @@ private:
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
 
+    void createBloomPipeline() {
+        auto computeShaderCode = readFile("shaders/bloom.comp.spv");
+
+        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
+
+        VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+        computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        computeShaderStageInfo.module = computeShaderModule;
+        computeShaderStageInfo.pName = "main";
+        computeShaderStageInfo.pSpecializationInfo = nullptr;
+
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = sizeof(uint32_t)*3;
+
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &bloomPipelineLayout) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create compute pipeline layout!");
+        }
+
+        VkComputePipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        pipelineInfo.layout = bloomPipelineLayout;
+        pipelineInfo.stage = computeShaderStageInfo;
+
+        if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &bloomPipeline) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create compute pipeline!");
+        }
+
+        vkDestroyShaderModule(device, computeShaderModule, nullptr);
+    }
+
     void createCompositionPipeline() {
         auto vertShaderCode = readFile("shaders/composition.vert.spv");
         auto fragShaderCode = readFile("shaders/composition.frag.spv");
@@ -1813,7 +1941,7 @@ private:
         VkCommandPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsAndComputeFamily.value();
 
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create graphics command pool!");
@@ -1988,7 +2116,7 @@ private:
         
         VkSamplerCreateInfo samplerInfo{};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_NEAREST;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -2095,8 +2223,14 @@ private:
 
             sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+            sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;//!!!
         } else {
-            throw std::invalid_argument("unsupported layout transition!");
+            throw std::invalid_argument("Unsupported layout transition!");
         }
 
         vkCmdPipelineBarrier(
@@ -2437,6 +2571,24 @@ private:
         }
     }
 
+    void createComputeDescriptorPool() {
+        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
+        poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &computeDescriptorPool) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create descriptor pool!");
+        }
+    }
+
     void createOnScreenDescriptorPool() {
         std::array<VkDescriptorPoolSize, 3> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2518,6 +2670,52 @@ private:
         }
     }
 
+    void createComputeDescriptorSets() {
+        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, computeDescriptorSetLayout);
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = computeDescriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        allocInfo.pSetLayouts = layouts.data();
+
+        computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+        if (vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate descriptor sets!");
+        }
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorImageInfo bloomInputImageInfo{};
+            bloomInputImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            bloomInputImageInfo.imageView = extraAttachment.view;
+            bloomInputImageInfo.sampler = compositionSampler;
+            
+            VkDescriptorImageInfo bloomOuputImageInfo{};
+            bloomOuputImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            bloomOuputImageInfo.imageView = bloomImageView;
+            bloomOuputImageInfo.sampler = compositionSampler;
+
+            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = computeDescriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pImageInfo = &bloomInputImageInfo;
+
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = computeDescriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &bloomOuputImageInfo;
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        }
+    }
+
     void createOnScreenDescriptorSets() {
         std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, onScreenDescriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{};
@@ -2547,8 +2745,8 @@ private:
             compositionImageInfo[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             compositionImageInfo[2].imageView = normalAttachment.view;
             compositionImageInfo[2].sampler = compositionSampler;
-            compositionImageInfo[3].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            compositionImageInfo[3].imageView = extraAttachment.view;
+            compositionImageInfo[3].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            compositionImageInfo[3].imageView = bloomImageView;
             compositionImageInfo[3].sampler = compositionSampler;
 
             VkDescriptorBufferInfo lightBufferInfo{};
@@ -2586,6 +2784,40 @@ private:
         }
     }
 
+    void recreateComputeDescriptorSets() {
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            VkDescriptorImageInfo bloomInputImageInfo{};
+            bloomInputImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            bloomInputImageInfo.imageView = extraAttachment.view;
+            bloomInputImageInfo.sampler = compositionSampler;
+            
+            VkDescriptorImageInfo bloomOuputImageInfo{};
+            bloomOuputImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            bloomOuputImageInfo.imageView = bloomImageView;
+            bloomOuputImageInfo.sampler = compositionSampler;
+
+            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[0].dstSet = computeDescriptorSets[i];
+            descriptorWrites[0].dstBinding = 0;
+            descriptorWrites[0].dstArrayElement = 0;
+            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            descriptorWrites[0].descriptorCount = 1;
+            descriptorWrites[0].pImageInfo = &bloomInputImageInfo;
+
+            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[1].dstSet = computeDescriptorSets[i];
+            descriptorWrites[1].dstBinding = 1;
+            descriptorWrites[1].dstArrayElement = 0;
+            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            descriptorWrites[1].descriptorCount = 1;
+            descriptorWrites[1].pImageInfo = &bloomOuputImageInfo;
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+        }
+    }
+
     void recreateOnScreenDescriptorSets() {
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             VkDescriptorImageInfo compositionImageInfo[COLOR_ATTACHMENT_COUNT];
@@ -2598,8 +2830,8 @@ private:
             compositionImageInfo[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             compositionImageInfo[2].imageView = normalAttachment.view;
             compositionImageInfo[2].sampler = compositionSampler;
-            compositionImageInfo[3].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            compositionImageInfo[3].imageView = extraAttachment.view;
+            compositionImageInfo[3].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            compositionImageInfo[3].imageView = bloomImageView;
             compositionImageInfo[3].sampler = compositionSampler;
 
             std::array<VkWriteDescriptorSet, 1> descriptorWrites{};
@@ -2713,7 +2945,7 @@ private:
         throw std::runtime_error("Failed to find suitable memory type!");
     }
 
-    void createOffScreenCommandBuffer() {
+    void createOffScreenCommandBuffers() {
         offScreenCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 
         VkCommandBufferAllocateInfo allocInfo{};
@@ -2724,6 +2956,20 @@ private:
 
         if (vkAllocateCommandBuffers(device, &allocInfo, offScreenCommandBuffers.data()) != VK_SUCCESS) {
             throw std::runtime_error("Failed to allocate off screen command buffer!");
+        }
+    }//!!!Unused
+
+    void createComputeCommandBuffers() {
+        computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t) computeCommandBuffers.size();
+
+        if (vkAllocateCommandBuffers(device, &allocInfo, computeCommandBuffers.data()) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate compute command buffers!");
         }
     }
 
@@ -2822,6 +3068,55 @@ private:
         }
     }
 
+    void recordComputeCommandBuffer(VkCommandBuffer commandBuffer) {
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to begin recording compute command buffer!");
+        }
+        
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, bloomPipeline);
+
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, bloomPipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
+        
+        for (int i = 0; i < 1; i++) {
+            {
+            struct {
+                uint32_t width;
+                uint32_t height;
+                uint32_t horizontal;
+            } pushConstant;
+            pushConstant.width = swapChainExtent.width;
+            pushConstant.height = swapChainExtent.height;
+            pushConstant.horizontal = (uint32_t) true;
+
+            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)*3, &pushConstant);
+
+            vkCmdDispatch(commandBuffer, 1, swapChainExtent.height, 1);
+            }
+
+            {
+            struct {
+                uint32_t width;
+                uint32_t height;
+                uint32_t horizontal;
+            } pushConstant;
+            pushConstant.width = swapChainExtent.width;
+            pushConstant.height = swapChainExtent.height;
+            pushConstant.horizontal = (uint32_t) false;
+
+            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)*3, &pushConstant);
+
+            vkCmdDispatch(commandBuffer, swapChainExtent.width, 1, 1);
+            }
+        }
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to record compute command buffer!");
+        }
+    }
+
     void recordOnScreenCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2882,9 +3177,11 @@ private:
     void createSyncObjects() {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         offScreenRenderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         onScreenRenderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-        deferredFences.resize(MAX_FRAMES_IN_FLIGHT);
+        computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+        deferredInFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
 
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -2898,11 +3195,17 @@ private:
                 vkCreateSemaphore(device, &semaphoreInfo, nullptr, &offScreenRenderFinishedSemaphores[i]) != VK_SUCCESS ||
                 vkCreateSemaphore(device, &semaphoreInfo, nullptr, &onScreenRenderFinishedSemaphores[i]) != VK_SUCCESS ||
                 vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS ||
-                vkCreateFence(device, &fenceInfo, nullptr, &deferredFences[i]) != VK_SUCCESS) {
+                vkCreateFence(device, &fenceInfo, nullptr, &deferredInFlightFences[i]) != VK_SUCCESS) {
                 throw std::runtime_error("Failed to create synchronization objects for a frame!");
             }
 
-            vkResetFences(device, 1, &deferredFences[i]);
+            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFences[i]) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to create compute synchronization objects for a frame!");
+            }
+
+            vkResetFences(device, 1, &computeInFlightFences[i]);
+            vkResetFences(device, 1, &deferredInFlightFences[i]);
         }
     }
 
@@ -3035,10 +3338,16 @@ private:
     void drawFrame() {
         vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
-        uint32_t imageIndex;
-        VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
-        VkSemaphore signalSemaphores[] = {offScreenRenderFinishedSemaphores[currentFrame], onScreenRenderFinishedSemaphores[currentFrame]};
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
+        VkSemaphore signalSemaphores[] = {offScreenRenderFinishedSemaphores[currentFrame], computeFinishedSemaphores[currentFrame], onScreenRenderFinishedSemaphores[currentFrame]};
+
+        uint32_t imageIndex;
+        
+        //Get image to be presented
+        VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        
         if (result == VK_ERROR_OUT_OF_DATE_KHR) {
             recreateSwapChain();
             return;
@@ -3046,6 +3355,7 @@ private:
             throw std::runtime_error("Failed to acquire swap chain image!");
         }
 
+        //Off screen render
         {
         updateUniformBuffer(currentFrame);
         if (isLightsChanged)
@@ -3055,9 +3365,6 @@ private:
 
         vkResetCommandBuffer(commandBuffers[currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
         recordOffScreenCommandBuffer(commandBuffers[currentFrame], imageIndex);
-
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
         VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -3071,22 +3378,48 @@ private:
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &signalSemaphores[0];
 
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, deferredFences[currentFrame]) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, computeInFlightFences[currentFrame]) != VK_SUCCESS) {
             throw std::runtime_error("Failed to submit draw command buffer for off screen render!");
         }
         }
 
+        //Compute 
         {
-        vkWaitForFences(device, 1, &deferredFences[currentFrame], VK_TRUE, UINT64_MAX);
+        vkWaitForFences(device, 1, &computeInFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
-        vkResetFences(device, 1, &deferredFences[currentFrame]);
+        recordComputeCommandBuffer(computeCommandBuffers[currentFrame]);
+
+        vkResetFences(device, 1, &computeInFlightFences[currentFrame]);
+
+        VkSemaphore waitSemaphores[] = {signalSemaphores[0]};
+        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &computeCommandBuffers[currentFrame];
+
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &signalSemaphores[1];
+
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, deferredInFlightFences[currentFrame]) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to submit draw command buffer for off screen render!");
+        }
+        }
+
+        //On screen render
+        {
+        vkWaitForFences(device, 1, &deferredInFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
         recordOnScreenCommandBuffer(commandBuffers[currentFrame], imageIndex);
+
+        vkResetFences(device, 1, &deferredInFlightFences[currentFrame]);
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = {signalSemaphores[0]};
+        VkSemaphore waitSemaphores[] = {signalSemaphores[1]};
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = waitSemaphores;
@@ -3096,18 +3429,19 @@ private:
         submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
         submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &signalSemaphores[1];
+        submitInfo.pSignalSemaphores = &signalSemaphores[2];
 
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
             throw std::runtime_error("Failed to submit draw command buffer for on screen render!");
         }
         }
 
+        //Present
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &signalSemaphores[1];
+        presentInfo.pWaitSemaphores = &signalSemaphores[2];
 
         VkSwapchainKHR swapChains[] = {swapChain};
         presentInfo.swapchainCount = 1;
@@ -3247,9 +3581,9 @@ private:
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
         int i = 0;
-        for (const auto& queueFamily : queueFamilies) {
-            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                indices.graphicsFamily = i;
+        for (const auto &queueFamily : queueFamilies) {
+            if ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+                indices.graphicsAndComputeFamily = i;
             }
 
             VkBool32 presentSupport = false;

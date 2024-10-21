@@ -31,10 +31,10 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) in vec2 fragmentTextureCoordinates;
 
 vec3 toneMap(inout vec3 color) {
-    //Exposure tone mapping
-    color = vec3(1.0) - exp(-color * ubo.exposure);
-    //Gamma correction 
-    color = pow(color, vec3(1.0 / ubo.gamma));
+    // //Exposure tone mapping
+    // color = vec3(1.0) - exp(-color * ubo.exposure);
+    // //Gamma correction 
+    // color = pow(color, vec3(1.0 / ubo.gamma));
     return color;
 }
 
@@ -43,12 +43,16 @@ float magnitude(in vec3 v) {
 }
 
 void main() {
+    outColor = texture(gSamplers[3], fragmentTextureCoordinates);
+    return;
+
     vec4 tempPosition = texture(gSamplers[0], fragmentTextureCoordinates);
     vec3 position = tempPosition.xyz;
     vec3 albedo = texture(gSamplers[1], fragmentTextureCoordinates).xyz;
 
     if (tempPosition.w == 0.0) {
-        outColor = vec4(toneMap(albedo), 1.0);
+        vec3 hdrColor = albedo + texture(gSamplers[3], fragmentTextureCoordinates).xyz;
+        outColor = vec4(toneMap(hdrColor), 1.0);
         return;
     }
 
@@ -75,6 +79,8 @@ void main() {
 
         hdrColor += attenuation*(diffuse+spec)*(1.0f-ambient);
     }
+
+    hdrColor = texture(gSamplers[3], fragmentTextureCoordinates).xyz;
   
     outColor = vec4(toneMap(hdrColor), 1.0);
 }
