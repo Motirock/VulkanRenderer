@@ -43,9 +43,6 @@ float magnitude(in vec3 v) {
 }
 
 void main() {
-    outColor = texture(gSamplers[3], fragmentTextureCoordinates);
-    return;
-
     vec4 tempPosition = texture(gSamplers[0], fragmentTextureCoordinates);
     vec3 position = tempPosition.xyz;
     vec3 albedo = texture(gSamplers[1], fragmentTextureCoordinates).xyz;
@@ -80,7 +77,7 @@ void main() {
         hdrColor += attenuation*(diffuse+spec)*(1.0f-ambient);
     }
 
-    hdrColor = texture(gSamplers[3], fragmentTextureCoordinates).xyz;
+    hdrColor += texture(gSamplers[3], fragmentTextureCoordinates).xyz;
   
     outColor = vec4(toneMap(hdrColor), 1.0);
 }

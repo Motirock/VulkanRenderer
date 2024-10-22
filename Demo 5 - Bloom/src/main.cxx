@@ -229,6 +229,9 @@ private:
     VkImage bloomImage;
     VkDeviceMemory bloomImageMemory;
     VkImageView bloomImageView;
+    VkImage bloomOutputImage;
+    VkDeviceMemory bloomOutputImageMemory;
+    VkImageView bloomOutputImageView;
 
     VkRenderPass offScreenRenderPass;
     VkRenderPass onScreenRenderPass;
@@ -245,8 +248,6 @@ private:
     VkPipelineLayout skyboxPipelineLayout;
     VkPipeline skyboxPipeline;
 
-    VkSpecializationInfo bloomSpecilizationConstants;
-    void *bloomSpecilizationData;
     VkPipelineLayout bloomPipelineLayout;
     VkPipeline bloomPipeline;
 
@@ -524,7 +525,7 @@ private:
     float scrollAmount = 0;
     bool lockedIn = false;
     bool cursorJustEntered = false;
-    bool xPressed = false, zPressed = false, cPressed = false;
+    bool xPressed = false, zPressed = false, cPressed = false, bPressed = false;
     void input() {
         float speed = this->speed;
         float turningSensitivity = this->turningSensitivity*FOV/90.0f;
@@ -585,6 +586,8 @@ private:
             isLightsChanged = true;
         }
         cPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
+
+        bPressed = glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS;
 
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) {
            exposure *= 1.01f;
@@ -694,6 +697,10 @@ private:
         vkDestroyImageView(device, bloomImageView, nullptr);
         vkDestroyImage(device, bloomImage, nullptr);
         vkFreeMemory(device, bloomImageMemory, nullptr);
+
+        vkDestroyImageView(device, bloomOutputImageView, nullptr);
+        vkDestroyImage(device, bloomOutputImage, nullptr);
+        vkFreeMemory(device, bloomOutputImageMemory, nullptr);
 
         vkDestroySwapchainKHR(device, swapChain, nullptr);
     }
@@ -843,6 +850,9 @@ private:
 
         vkDestroyImage(device, bloomImage, nullptr);
         vkDestroyImageView(device, bloomImageView, nullptr);
+
+        vkDestroyImage(device, bloomOutputImage, nullptr);
+        vkFreeMemory(device, bloomOutputImageMemory, nullptr);
 
         createImageViews();
         createFramebuffers();
@@ -1080,11 +1090,13 @@ private:
 	}
 
     void createBloomImage() {
-        createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bloomImage, bloomImageMemory);
-    
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bloomImage, bloomImageMemory);
         transitionImageLayout(bloomImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
-
         bloomImageView = createImageView(bloomImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bloomOutputImage, bloomOutputImageMemory);
+        transitionImageLayout(bloomOutputImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 1);
+        bloomOutputImageView = createImageView(bloomOutputImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
     void createOffScreenRenderPass() {
@@ -3080,6 +3092,11 @@ private:
 
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, bloomPipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
         
+        VkClearColorValue clearValueColor = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkImageSubresourceRange clearRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        vkCmdClearColorImage(commandBuffer, bloomImage, VK_IMAGE_LAYOUT_GENERAL, &clearValueColor, 1, &clearRange);
+
         for (int i = 0; i < 1; i++) {
             {
             struct {
@@ -3091,7 +3108,7 @@ private:
             pushConstant.height = swapChainExtent.height;
             pushConstant.horizontal = (uint32_t) true;
 
-            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)*3, &pushConstant);
+            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstant), &pushConstant);
 
             vkCmdDispatch(commandBuffer, 1, swapChainExtent.height, 1);
             }
@@ -3106,7 +3123,7 @@ private:
             pushConstant.height = swapChainExtent.height;
             pushConstant.horizontal = (uint32_t) false;
 
-            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)*3, &pushConstant);
+            vkCmdPushConstants(commandBuffer, bloomPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pushConstant), &pushConstant);
 
             vkCmdDispatch(commandBuffer, swapChainExtent.width, 1, 1);
             }
