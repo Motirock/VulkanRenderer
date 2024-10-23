@@ -17,7 +17,7 @@ float magnitude(in vec3 v) {
 
 void main() {
     gPosition = vec4(0.0f);
-    gColor = vec4(fragmentColor, 1.0f);
+    gColor = vec4(fragmentColor*fragmentStrength, 1.0f);
     gNormal = vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    gExtra = vec4(fragmentColor, 0.0f);
+    gExtra = vec4(fragmentColor*fragmentStrength, 0.0f);
 }

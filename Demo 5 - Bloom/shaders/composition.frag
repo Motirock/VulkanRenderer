@@ -64,7 +64,7 @@ void main() {
     for(int i = 0; i < lightBuffer.lightCount; i++) {
         vec3 difference = lightBuffer.lights[i].position - position;
         float attenuation = lightBuffer.lights[i].strength/(difference.x*difference.x+difference.y*difference.y+difference.z*difference.z+1.0f);
-        //if (attenuation < 0.01f) continue; //Useless. Fuck gpus
+        //if (attenuation < 0.01f) continue; //Useless. :(
 
         //Diffuse
         vec3 lightDir = normalize(difference);

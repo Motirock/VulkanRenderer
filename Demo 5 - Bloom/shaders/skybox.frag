@@ -15,5 +15,5 @@ void main() {
     gPosition = vec4(0.0f);
     gColor = vec4(sampledColor.xyz, 1.0f);
     gNormal = vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    gExtra = vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    gExtra = vec4(sampledColor.xyz*2.0f, 0.0f);
 }
