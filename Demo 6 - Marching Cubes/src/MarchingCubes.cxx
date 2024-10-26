@@ -1,55 +1,53 @@
 #include "MarchingCubes.h"
 
-#include <iostream>
-
-const int masks[12] = {
-    0b000000000001,
-    0b000000000010,
-    0b000000000100,
-    0b000000001000,
-    0b000000010000,
-    0b000000100000,
-    0b000001000000,
-    0b000010000000,
-    0b000100000000,
-    0b001000000000,
-    0b010000000000,
-    0b100000000000,
+const int MarchingCubes::edgeToVertices[12][2] = {
+    {0, 1},
+    {1, 2},
+    {2, 3}, 
+    {0, 3},
+    {4, 5}, 
+    {5, 6}, 
+    {6, 7}, 
+    {4, 7},
+    {0, 4}, 
+    {1, 5}, 
+    {2, 6}, 
+    {3, 7},
 };
 
-const int edgeTable[256] = {
-    0x0  , 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
+const int MarchingCubes::edgeTable[256] = {
+    0x000, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
     0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
-    0x190, 0x99 , 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
+    0x190, 0x099, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
     0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
-    0x230, 0x339, 0x33 , 0x13a, 0x636, 0x73f, 0x435, 0x53c,
+    0x230, 0x339, 0x033, 0x13a, 0x636, 0x73f, 0x435, 0x53c,
     0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
-    0x3a0, 0x2a9, 0x1a3, 0xaa , 0x7a6, 0x6af, 0x5a5, 0x4ac,
+    0x3a0, 0x2a9, 0x1a3, 0x0aa, 0x7a6, 0x6af, 0x5a5, 0x4ac,
     0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
-    0x460, 0x569, 0x663, 0x76a, 0x66 , 0x16f, 0x265, 0x36c,
+    0x460, 0x569, 0x663, 0x76a, 0x066, 0x16f, 0x265, 0x36c,
     0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
-    0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0xff , 0x3f5, 0x2fc,
+    0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0x0ff, 0x3f5, 0x2fc,
     0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
-    0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x55 , 0x15c,
+    0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x055, 0x15c,
     0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
-    0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0xcc ,
+    0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0x0cc,
     0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
     0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc,
-    0xcc , 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
+    0x0cc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
     0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c,
-    0x15c, 0x55 , 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
+    0x15c, 0x055, 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
     0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc,
-    0x2fc, 0x3f5, 0xff , 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
+    0x2fc, 0x3f5, 0x0ff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
     0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c,
-    0x36c, 0x265, 0x16f, 0x66 , 0x76a, 0x663, 0x569, 0x460,
+    0x36c, 0x265, 0x16f, 0x066, 0x76a, 0x663, 0x569, 0x460,
     0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac,
-    0x4ac, 0x5a5, 0x6af, 0x7a6, 0xaa , 0x1a3, 0x2a9, 0x3a0,
+    0x4ac, 0x5a5, 0x6af, 0x7a6, 0x0aa, 0x1a3, 0x2a9, 0x3a0,
     0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c,
-    0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x33 , 0x339, 0x230,
+    0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x033, 0x339, 0x230,
     0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c,
-    0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x99 , 0x190,
+    0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x099, 0x190,
     0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
-    0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0  ,
+    0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x000,
 };
 
 const int triangleTable[256][16] = {
@@ -311,67 +309,63 @@ const int triangleTable[256][16] = {
     {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 };
 
-glm::vec3 MarchingCubes::interpolateVertex(const glm::vec3 &point1, const glm::vec3 &point2, float value1, float value2, float isoLevel) {
-    return point1 + (isoLevel - value1) * (point2 - point1)  / (value2 - value1);
+int MarchingCubes::getCubeIndex(const GridCell &cell, const float &isoValue) {
+    int cubeIndex = 0;
+    for (int i = 0; i < 8; i++)
+        if (cell.value[i] < isoValue) cubeIndex |= (1 << i);
+
+    return cubeIndex;
 }
 
-std::vector<glm::vec3> MarchingCubes::polygonize(const float *data, float isoLevel) {
-    std::vector<glm::vec3> vertices;
+glm::vec3 MarchingCubes::interpolateVertices(const glm::vec3 &vertex1, const float &value1, const glm::vec3 &vertex2, const float &value2, const float &isoValue) {
+    glm::vec3 interpolated;
+    float mu = (isoValue - value1) / (value2 - value1); //mewing?
 
-    int cubeIndex = 0;
-    for (int i = 0; i < 8; i++) {
-        cubeIndex |= (data[i] < isoLevel) ? masks[i] : 0;
+    interpolated.x = vertex1.x + mu*(vertex2.x-vertex1.x);
+    interpolated.y = vertex1.y + mu*(vertex2.y-vertex1.y);
+    interpolated.z = vertex1.z + mu*(vertex2.z-vertex1.z);
+
+    return interpolated;
+}
+
+
+std::vector<glm::vec3> MarchingCubes::getIntersections(const GridCell &cell, const float &isoValue) {
+    std::vector<glm::vec3> intersections (12);
+
+    int cubeIndex = getCubeIndex(cell, isoValue);
+    int intersectionsKey = edgeTable[cubeIndex];
+
+    int index = 0;
+    while (intersectionsKey) {
+        if (intersectionsKey & 1) {
+            int v1 = edgeToVertices[index][0], v2 = edgeToVertices[index][1];
+            glm::vec3 intersectionPoint = interpolateVertices(cell.vertex[v1], cell.value[v1], cell.vertex[v2], cell.value[v2], isoValue);
+            intersections[index] = intersectionPoint;
+        }
+        index++;
+        intersectionsKey >>= 1;
     }
 
-    if (edgeTable[cubeIndex] == 0) {
-        return vertices;
-    }
+    return intersections;
+}
 
-    glm::vec3 localVertices[12];
-
-    if (edgeTable[cubeIndex] & masks[0]) {
-        localVertices[0] = interpolateVertex(glm::vec3(0, 0, 0), glm::vec3(1, 0, 0), data[0], data[1], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[1]) {
-        localVertices[1] = interpolateVertex(glm::vec3(1, 0, 0), glm::vec3(1, 0, 1), data[1], data[2], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[2]) {
-        localVertices[2] = interpolateVertex(glm::vec3(0, 0, 1), glm::vec3(1, 0, 1), data[2], data[3], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[3]) {
-        localVertices[3] = interpolateVertex(glm::vec3(0, 0, 0), glm::vec3(0, 0, 1), data[3], data[0], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[4]) {
-        localVertices[4] = interpolateVertex(glm::vec3(0, 1, 0), glm::vec3(1, 1, 0), data[4], data[5], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[5]) {
-        localVertices[5] = interpolateVertex(glm::vec3(1, 1, 0), glm::vec3(1, 1, 1), data[5], data[6], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[6]) {
-        localVertices[6] = interpolateVertex(glm::vec3(0, 1, 1), glm::vec3(1, 1, 1), data[6], data[7], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[7]) {
-        localVertices[7] = interpolateVertex(glm::vec3(0, 1, 0), glm::vec3(0, 1, 1), data[7], data[4], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[8]) {
-        localVertices[8] = interpolateVertex(glm::vec3(0, 0, 0), glm::vec3(0, 1, 0), data[0], data[4], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[9]) {
-        localVertices[9] = interpolateVertex(glm::vec3(1, 0, 0), glm::vec3(1, 1, 0), data[1], data[5], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[10]) {
-        localVertices[10] = interpolateVertex(glm::vec3(1, 0, 1), glm::vec3(1, 1, 1), data[2], data[6], isoLevel);
-    }
-    if (edgeTable[cubeIndex] & masks[11]) {
-        localVertices[11] = interpolateVertex(glm::vec3(0, 0, 1), glm::vec3(0, 1, 1), data[3], data[7], isoLevel);
-    }
+std::vector<std::vector<glm::vec3>> MarchingCubes::getTriangles(const std::vector<glm::vec3> &intersections, const int &cubeIndex) {
+    std::vector<std::vector<glm::vec3>> triangles;
 
     for (int i = 0; triangleTable[cubeIndex][i] != -1; i += 3) {
-        for (int j = 0; j < 3; ++j) {
-            int edgeIndex = triangleTable[cubeIndex][i + j];
-            vertices.push_back(localVertices[edgeIndex]);
-        }
+        std::vector<glm::vec3> triangle (3);
+        for (int j = 0; j < 3; j++)
+            triangle[j] = intersections[triangleTable[cubeIndex][i + j]];
+        triangles.push_back(triangle);
     }
 
-    return vertices;
+    return triangles;
+}
+
+std::vector<std::vector<glm::vec3>> MarchingCubes::triangulateCell(const GridCell &cell, const float isoValue) {
+    int cubeIndex = getCubeIndex(cell, isoValue);
+    std::vector<glm::vec3> intersections = getIntersections(cell, isoValue);
+    std::vector<std::vector<glm::vec3>> triangles = getTriangles(intersections, cubeIndex);
+
+    return triangles;
 }

@@ -23,7 +23,7 @@ layout(binding = 1) uniform sampler2D gSamplers[4];
 
 layout(std430, binding = 2) readonly restrict buffer LightBuffer {
     int lightCount;
-    Light lights[100];
+    Light lights[2000];
 } lightBuffer;
 
 layout(location = 0) out vec4 outColor;
@@ -77,7 +77,7 @@ void main() {
         hdrColor += attenuation*(diffuse+spec)*(1.0f-ambient);
     }
 
-    vec3 sunDirection = normalize(vec3(sin(ubo.time), cos(ubo.time), 1.0));
+    vec3 sunDirection = normalize(vec3(sin(ubo.time*0.1f), cos(ubo.time*0.1f), 1.0));
     vec3 lightDir = normalize(sunDirection);
     vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * vec3(1.0);
     vec3 reflected = reflect(-lightDir, normal);

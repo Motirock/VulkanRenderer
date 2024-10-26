@@ -47,9 +47,6 @@ glslc shaders/bloom.comp -o shaders/bloom.comp.spv
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
-
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -71,6 +68,7 @@ glslc shaders/bloom.comp -o shaders/bloom.comp.spv
 #include <json/writer.h>
 
 #include "MarchingCubes.h"
+#include "PerlinNoise.hpp"
 
 using namespace VkUtils;
 
@@ -88,13 +86,7 @@ const uint32_t BLOOM_WIDTH = 400;
 const uint32_t BLOOM_HEIGHT = 225;
 #endif
 
-const std::string MODEL_PATH = "models/lost_empire/lost_empire.obj";
-
-const uint32_t MAX_VERTEX_MEMORY = 1'000*sizeof(Vertex);
-const uint32_t MAX_INSTANCE_MEMORY = 2'000'000*sizeof(1);
-const uint32_t MAX_INDEX_MEMORY = 1'000*sizeof(uint32_t);
-
-const std::string TEXTURE_ATLAS_PATH = "models/lost_empire/lost_empire-RGBA.png";
+const std::string TEXTURE_ATLAS_PATH = "textures/grass.jpg";
 const std::string SKYBOX_PATH = "textures/skybox/";
 
 
@@ -176,7 +168,7 @@ struct Light {
     float strength; //!= 0
 };
 
-const uint32_t MAX_LIGHTS = 100;
+const uint32_t MAX_LIGHTS = 2000;
 struct LightBufferObject {
     int32_t lightCount;
     alignas(16) Light lights[MAX_LIGHTS];
@@ -309,6 +301,7 @@ private:
     std::vector<void*> uniformBuffersMapped;
 
     std::vector<Light> lights;
+    const float LIGHT_SIZE = 1.0f;
     bool isLightBufferChanged = false;
 
     VkBuffer lightBuffer;
@@ -340,7 +333,7 @@ private:
     bool framebufferResized = false;
     uint32_t TPS = 60, ticks = 0;
 
-    glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, 15.0f);
+    glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, 2.0f);
     glm::vec3 viewDirection = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     //Degrees, xy plane, xz plane
     glm::vec2 viewAngles = glm::vec2(0, 0);
@@ -567,7 +560,7 @@ private:
         if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
             viewAngles.x += turningSensitivity;
 
-        if (!xPressed && glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS && lights.size() < 100) {
+        if (!xPressed && glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS && lights.size() < MAX_LIGHTS) {
             float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
             float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
             float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
@@ -661,12 +654,12 @@ private:
                 averageFrameTime += frameTime/TPS;
                 
                 if (ticks % TPS == 0) {
-                    //uint32_t vertexCount = vertices.size();
+                    uint32_t vertexCount = vertices.size();
                     uint32_t indexCount = indices.size()+lightIndices.size()+36;
                     
                     std::cout << "Frame time: " << averageFrameTime <<
                         ", estimated maximum FPS: " << (int) (1.0f/averageFrameTime) << "\n"
-                        << "Polygons rendered: " << indexCount/3 << "\n"
+                        << "Polygons rendered: " << vertexCount/3 << "\n"
                         // << "Vertex count: " << vertexCount << " Vertex memory size: " << vertexCount*sizeof(Vertex) << "\n"
                         // << "Index count: " << indexCount << " Index memory size: " << indexCount*sizeof(uint32_t) << "\n"
                         << "\n";
@@ -1215,14 +1208,6 @@ private:
 
         // Subpass dependencies for layout transitions
         std::array<VkSubpassDependency, 1> dependencies;
-
-        // dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        // dependencies[0].dstSubpass = 0;
-        // dependencies[0].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        // dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        // dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        // dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-        // dependencies[0].dependencyFlags = 0;
 
         dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
         dependencies[0].dstSubpass = 0;
@@ -2079,8 +2064,8 @@ private:
         
         VkSamplerCreateInfo samplerInfo{};
         samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        samplerInfo.magFilter = VK_FILTER_NEAREST;
-        samplerInfo.minFilter = VK_FILTER_NEAREST;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -2091,9 +2076,9 @@ private:
         samplerInfo.compareEnable = VK_FALSE;
         samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        samplerInfo.minLod = 0.0f; //Optional
-        samplerInfo.maxLod = 0.0f; //static_cast<float>(mipLevels);
-        samplerInfo.mipLodBias = 0.0f; //Optional
+        samplerInfo.minLod = 0.0f;
+        samplerInfo.maxLod = 0.0f;
+        samplerInfo.mipLodBias = 0.0f;
 
         if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create texture sampler!");
@@ -2286,78 +2271,156 @@ private:
     }
 
     void loadModel() {
-        tinyobj::attrib_t attrib;
-        std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
-        std::string warn, err;
+        // tinyobj::attrib_t attrib;
+        // std::vector<tinyobj::shape_t> shapes;
+        // std::vector<tinyobj::material_t> materials;
+        // std::string warn, err;
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str(), "models/lost_empire/")) {
-            throw std::runtime_error(warn + err);
-        }
+        // if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str(), "models/lost_empire/")) {
+        //     throw std::runtime_error(warn + err);
+        // }
 
-        //throw std::runtime_error(warn + err);
+        // //throw std::runtime_error(warn + err);
 
-        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        // std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
-        for (const auto &shape : shapes) {
-            for (int i = shape.mesh.indices.size()-1; i >= 0; i--) {
-                const auto &index = shape.mesh.indices[i];
+        // for (const auto &shape : shapes) {
+        //     for (int i = shape.mesh.indices.size()-1; i >= 0; i--) {
+        //         const auto &index = shape.mesh.indices[i];
 
-                Vertex vertex{};
+        //         Vertex vertex{};
 
-                vertex.position = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 2],
-                    attrib.vertices[3 * index.vertex_index + 1]
-                };
+        //         vertex.position = {
+        //             attrib.vertices[3 * index.vertex_index + 0],
+        //             attrib.vertices[3 * index.vertex_index + 2],
+        //             attrib.vertices[3 * index.vertex_index + 1]
+        //         };
 
-                vertex.textureCoordinates = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-                };
+        //         vertex.textureCoordinates = {
+        //             attrib.texcoords[2 * index.texcoord_index + 0],
+        //             1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+        //         };
 
-                vertex.color = {1.0f, 1.0f, 1.0f};
+        //         vertex.color = {1.0f, 1.0f, 1.0f};
                 
-                vertex.normal = {
-                    attrib.normals[3 * index.normal_index + 0],
-                    attrib.normals[3 * index.normal_index + 2],
-                    attrib.normals[3 * index.normal_index + 1]
-                };
+        //         vertex.normal = {
+        //             attrib.normals[3 * index.normal_index + 0],
+        //             attrib.normals[3 * index.normal_index + 2],
+        //             attrib.normals[3 * index.normal_index + 1]
+        //         };
 
-                if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back({vertex.position, vertex.color, vertex.textureCoordinates, vertex.normal});
-                }
+        //         if (uniqueVertices.count(vertex) == 0) {
+        //             uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+        //             vertices.push_back({vertex.position, vertex.color, vertex.textureCoordinates, vertex.normal});
+        //         }
 
-                indices.push_back(uniqueVertices[vertex]);
-            }
-        }
+        //         indices.push_back(uniqueVertices[vertex]);
+        //     }
+        // }
 
-        createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
-        createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
+        // createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
+        // createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
     }
 
     void buildWorld() {
-        std::vector<Vertex> vertices;
+        const siv::PerlinNoise::seed_type noiseSeed = 0;
+	    const siv::PerlinNoise noise { noiseSeed };
 
-        const float data[8] = {
-            -1.0f, -1.0f,
-            1.0f, -1.0f,
-            1.0f,  1.0f,
-            -1.0f,  1.0f
-        };
+        int X = 200;
+        int Y = 200;
+        int Z = 50;
 
-        float isoLevel = 0.5f;
+        lights.clear();
 
-        std::vector<glm::vec3> vertexPositions = MarchingCubes::polygonize(data, isoLevel);
+        float chunkData[X+1][Y+1][Z+1];
 
-        for (int i = 0; i < vertexPositions.size(); i += 3) {
-            glm::vec3 normal = glm::normalize(glm::cross(vertexPositions[i+1]-vertexPositions[i+0], vertexPositions[i+2]-vertexPositions[i+0]));
+        for (int i = 0; i <= X; i++) {
+            int x = i;
+            for (int j = 0; j <= Y; j++) {
+                int y = j;
+                for (int k = 0; k <= Z; k++) {
+                    int z = k;
 
-            vertices.push_back({vertexPositions[i+0], {(rand() % 101)/100.0f, (rand() % 101)/100.0f, (rand() % 101)/100.0f}, {0.0f, 0.0f}, normal});
-            vertices.push_back({vertexPositions[i+1], {(rand() % 101)/100.0f, (rand() % 101)/100.0f, (rand() % 101)/100.0f}, {0.0f, 0.0f}, normal});
-            vertices.push_back({vertexPositions[i+2], {(rand() % 101)/100.0f, (rand() % 101)/100.0f, (rand() % 101)/100.0f}, {0.0f, 0.0f}, normal});
+                    glm::vec3 pos = glm::vec3(x, y, z);
+                    float n = pos.z-(noise.noise3D_01(pos.x*0.1f, pos.y*0.1f, pos.z*0.1f)*0.1f+noise.noise2D_01(pos.x*0.01f, pos.y*0.01f)*0.9f) * Z;
+
+                    chunkData[i][j][k] = n;
+
+                    // float brightness = (float) chunkData[i][j][k];
+                    // lights.push_back(Light{
+                    //     glm::vec3(x, y, z),
+                    //     glm::vec3(brightness),
+                    //     1.0f
+                    // });
+                }
+            }
         }
+
+        isLightsChanged = true;
+
+        for (int i = 0; i < X; i++) {
+            int x = i;
+            for (int j = 0; j < Y; j++) {
+                int y = j;
+                for (int k = 0; k < Z; k++) {
+                    int z = k;
+
+                    const glm::vec3 positions[8] = {
+                        glm::vec3(x+0, y+0, z+0),
+                        glm::vec3(x+1, y+0, z+0),
+                        glm::vec3(x+1, y+0, z+1),
+                        glm::vec3(x+0, y+0, z+1),
+                        glm::vec3(x+0, y+1, z+0),
+                        glm::vec3(x+1, y+1, z+0),
+                        glm::vec3(x+1, y+1, z+1),
+                        glm::vec3(x+0, y+1, z+1)
+                    };
+
+                    const float data[8] = {
+                        chunkData[x+0][y+0][z+0],
+                        chunkData[x+1][y+0][z+0],
+                        chunkData[x+1][y+0][z+1],
+                        chunkData[x+0][y+0][z+1],
+                        chunkData[x+0][y+1][z+0],
+                        chunkData[x+1][y+1][z+0],
+                        chunkData[x+1][y+1][z+1],
+                        chunkData[x+0][y+1][z+1]
+                    };
+
+                    GridCell cell;
+                    memcpy(cell.vertex, positions, sizeof(glm::vec3)*8);
+                    memcpy(cell.value, data, sizeof(float)*8);
+
+                    float isoLevel = 0.5f;
+
+                    std::vector<std::vector<glm::vec3>> vertexPositions = MarchingCubes::triangulateCell(cell, isoLevel);
+
+                    for (int i = 0; i < vertexPositions.size(); i++) {
+                        std::vector<glm::vec3> trianglePositions = vertexPositions[i];
+                        glm::vec3 normal = glm::normalize(glm::cross(trianglePositions[1]-trianglePositions[0], trianglePositions[2]-trianglePositions[0]));
+
+                        vertices.push_back({trianglePositions[0], {trianglePositions[0]/glm::vec3(X, Y, Z)}, {0.0f, 0.0f}, normal});
+                        vertices.push_back({trianglePositions[1], {trianglePositions[1]/glm::vec3(X, Y, Z)}, {0.0f, 1.0f}, normal});
+                        vertices.push_back({trianglePositions[2], {trianglePositions[2]/glm::vec3(X, Y, Z)}, {1.0f, 1.0f}, normal});
+                    }
+
+                }
+            }
+        }
+
+        // Create a black square from 0 to 1 in both x and y
+        vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+        vertices.push_back({{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+        vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
+
+        vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
+        vertices.push_back({{0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
+        vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+
+        createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
+        std::cout << vertices.size()*sizeof(Vertex) << '\n';
+        indices.push_back(0);
+        createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
     }
 
     void createVertexBuffer(VkBuffer &vertexBuffer, VkDeviceMemory &vertexBufferMemory, VkDeviceSize bufferSize, void *vertexData) {
@@ -2504,18 +2567,6 @@ private:
     }
 
     void createLightBuffer() {
-        // for (int i = 0; i < MAX_LIGHTS; i++) {
-        //     int x = rand() % 41 - 20;
-        //     int y = rand() % 41 - 20;
-        //     int z = rand() % 20 + 10;
-
-        //     float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-        //     float g = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-        //     float b = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
-        
-        //     lights.push_back({{x, y, z}, {r, g, b}, 1.0f});
-        // }
-
         LightBufferObject lightBufferObject{};
         lightBufferObject.lightCount = static_cast<uint32_t>(lights.size());
         memcpy(lightBufferObject.lights, lights.data(), sizeof(Light)*lights.size());
@@ -2528,17 +2579,19 @@ private:
 
         memcpy(lightBufferMapped, &lightBufferObject, (size_t) bufferSize);
 
+        float radius = LIGHT_SIZE/2.0f;
+
         for (int i = 0; i < lights.size(); i++) {
             //Bottom of cube
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f, -0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f, -0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f, -0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f, -0.5f), lights[i].color, lights[i].strength});
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius, -radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius, -radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius,  radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius,  radius, -radius), lights[i].color, lights[i].strength });
             //Top of cube
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f,  0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f,  0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f,  0.5f), lights[i].color, lights[i].strength});
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f,  0.5f), lights[i].color, lights[i].strength});
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius, -radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius, -radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius,  radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius,  radius,  radius), lights[i].color, lights[i].strength });
 
             //Positive x (front)
             lightIndices.push_back(i*8+1);
@@ -3073,9 +3126,10 @@ private:
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipeline);
 			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            //vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            //vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+            vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
             }
 
             {
@@ -3406,17 +3460,19 @@ private:
         lightVertices.clear();
         lightIndices.clear();
 
+        float radius = LIGHT_SIZE/2.0f;
+
         for (int i = 0; i < lights.size(); i++) {
             //Bottom of cube
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f, -0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f, -0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f, -0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f, -0.5f), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius, -radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius, -radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius,  radius, -radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius,  radius, -radius), lights[i].color, lights[i].strength });
             //Top of cube
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f, -0.5f,  0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f, -0.5f,  0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3(-0.5f,  0.5f,  0.5f), lights[i].color, lights[i].strength });
-            lightVertices.push_back({ lights[i].position+glm::vec3( 0.5f,  0.5f,  0.5f), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius, -radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius, -radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3(-radius,  radius,  radius), lights[i].color, lights[i].strength });
+            lightVertices.push_back({ lights[i].position+glm::vec3( radius,  radius,  radius), lights[i].color, lights[i].strength });
 
             //Positive x (front)
             lightIndices.push_back(i*8+1);
@@ -3474,7 +3530,7 @@ private:
     }
 
     void update() {
-        
+        //std::cout << viewAngles.x << " " << viewAngles.y << std::endl;
     }
 
     void drawFrame() {
