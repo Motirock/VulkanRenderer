@@ -86,13 +86,19 @@ const uint32_t BLOOM_WIDTH = 400;
 const uint32_t BLOOM_HEIGHT = 225;
 #endif
 
-const uint32_t TEXTURE_COUNT = 3;
+const uint32_t TEXTURE_COUNT = 9;
+const std::string SKYBOX_PATH = "textures/skybox/";
 const std::string TEXTURE_PATHS[TEXTURE_COUNT] = {
+    SKYBOX_PATH+"front.jpg",
+    SKYBOX_PATH+"back.jpg",
+    SKYBOX_PATH+"left.jpg",
+    SKYBOX_PATH+"right.jpg",
+    SKYBOX_PATH+"top.jpg",
+    SKYBOX_PATH+"bottom.jpg",
     "textures/desert_albedo.png",
     "textures/desert_normal.png",
-    "textures/desert_roughness.png"
+    "textures/desert_roughness.png",
 };
-const std::string SKYBOX_PATH = "textures/skybox/";
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -259,18 +265,10 @@ private:
 
     VkCommandPool commandPool;
 
-    struct {
-        Texture sandAlbedoTexture;
-        Texture sandNormalTexture;
-        Texture sandRoughnessTexture;
-    } textures;
+    Texture textures[TEXTURE_COUNT];
+    
     VkSampler textureSampler;
-
-    VkImage skyboxImages[6];
-    VkDeviceMemory skyboximagememories[6];
-    VkImageView skyboxImageViews[6];
     VkSampler skyboxSampler;
-
     VkSampler compositionSampler;
 
     VkBuffer stagingBuffer;
@@ -339,7 +337,7 @@ private:
     bool framebufferResized = false;
     uint32_t TPS = 60, ticks = 0;
 
-    glm::vec3 cameraPosition = glm::vec3(0.0f, 0.0f, 2.0f);
+    glm::vec3 cameraPosition = glm::vec3(10.0f, 10.0f, 35.0f);
     glm::vec3 viewDirection = glm::normalize(glm::vec3(1.0f, 1.0f, 1.0f));
     //Degrees, xy plane, xz plane
     glm::vec2 viewAngles = glm::vec2(0, 0);
@@ -492,9 +490,6 @@ private:
 
         createTextureImages();
         createTextureImageViews();
-
-        createSkyboxImages();
-        createSkyboxImageViews();
 
         createTextureSampler();
         createSkyboxSampler();
@@ -745,19 +740,10 @@ private:
         vkDestroyDescriptorPool(device, computeDescriptorPool, nullptr);
         vkDestroyDescriptorPool(device, onScreenDescriptorPool, nullptr);
 
-        textures.sandAlbedoTexture.cleanup(device);
-        textures.sandNormalTexture.cleanup(device);
-        textures.sandRoughnessTexture.cleanup(device);
+        for (int i = 0; i < TEXTURE_COUNT; i++)
+            textures[i].cleanup(device);
 
         vkDestroySampler(device, textureSampler, nullptr);
-
-        vkDestroySampler(device, skyboxSampler, nullptr);
-
-        for (int i = 0; i < 6; i++) {
-            vkDestroyImageView(device, skyboxImageViews[i], nullptr);
-            vkDestroyImage(device, skyboxImages[i], nullptr);
-            vkFreeMemory(device, skyboximagememories[i], nullptr);
-        }
 
         vkDestroySampler(device, compositionSampler, nullptr);
 
@@ -1254,14 +1240,7 @@ private:
         samplerLayoutBinding.pImmutableSamplers = nullptr;
         samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorSetLayoutBinding skyboxSamplerLayoutBinding{};
-        skyboxSamplerLayoutBinding.binding = 2;
-        skyboxSamplerLayoutBinding.descriptorCount = 6;
-        skyboxSamplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        skyboxSamplerLayoutBinding.pImmutableSamplers = nullptr;
-        skyboxSamplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings = {uboLayoutBinding, samplerLayoutBinding, skyboxSamplerLayoutBinding};
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1987,120 +1966,14 @@ private:
     }
 
     void createTextureImages() {
-        {
-        int texWidth, texHeight, texChannels;
-        stbi_uc *pixels = stbi_load(TEXTURE_PATHS[0].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        VkDeviceSize imageSize = texWidth*texHeight*4;
-        textures.sandAlbedoTexture.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight))))+1;
-        
-        if (!pixels) {
-            throw std::runtime_error("Failed to load texture image!");
-        }
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void *data;
-        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-            memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        stbi_image_free(pixels);
-
-        createImage(texWidth, texHeight, textures.sandAlbedoTexture.mipLevels, 1, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textures.sandAlbedoTexture.image, textures.sandAlbedoTexture.imageMemory);
-
-        transitionImageLayout(textures.sandAlbedoTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, textures.sandAlbedoTexture.mipLevels);
-        copyBufferToImage(stagingBuffer, textures.sandAlbedoTexture.image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-        
-        generateMipmaps(textures.sandAlbedoTexture.image, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, textures.sandAlbedoTexture.mipLevels);
-        
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-        }
-
-        {
-        int texWidth, texHeight, texChannels;
-        stbi_uc *pixels = stbi_load(TEXTURE_PATHS[0].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        VkDeviceSize imageSize = texWidth*texHeight*4;
-        textures.sandNormalTexture.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight))))+1;
-        
-        if (!pixels) {
-            throw std::runtime_error("Failed to load texture image!");
-        }
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void *data;
-        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-            memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        stbi_image_free(pixels);
-
-        createImage(texWidth, texHeight, textures.sandNormalTexture.mipLevels, 1, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textures.sandNormalTexture.image, textures.sandNormalTexture.imageMemory);
-
-        transitionImageLayout(textures.sandNormalTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, textures.sandNormalTexture.mipLevels);
-        copyBufferToImage(stagingBuffer, textures.sandNormalTexture.image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-        
-        generateMipmaps(textures.sandNormalTexture.image, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, textures.sandNormalTexture.mipLevels);
-        }
-
-        {
-        int texWidth, texHeight, texChannels;
-        stbi_uc *pixels = stbi_load(TEXTURE_PATHS[0].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-        VkDeviceSize imageSize = texWidth*texHeight*4;
-        textures.sandRoughnessTexture.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight))))+1;
-        
-        if (!pixels) {
-            throw std::runtime_error("Failed to load texture image!");
-        }
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void *data;
-        vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-            memcpy(data, pixels, static_cast<size_t>(imageSize));
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        stbi_image_free(pixels);
-
-        createImage(texWidth, texHeight, textures.sandRoughnessTexture.mipLevels, 1, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textures.sandRoughnessTexture.image, textures.sandRoughnessTexture.imageMemory);
-
-        transitionImageLayout(textures.sandRoughnessTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, textures.sandRoughnessTexture.mipLevels);
-        copyBufferToImage(stagingBuffer, textures.sandRoughnessTexture.image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-        
-        generateMipmaps(textures.sandRoughnessTexture.image, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, textures.sandRoughnessTexture.mipLevels);
-        }
-    }
-
-    void createSkyboxImages() {
-        std::string DIRECTION_PATHS[6] = {
-            "front.jpg",
-            "back.jpg",
-            "left.jpg",
-            "right.jpg",
-            "top.jpg",
-            "bottom.jpg"
-        };
-
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < TEXTURE_COUNT; i++) {
             int texWidth, texHeight, texChannels;
-            stbi_uc *pixels = stbi_load((SKYBOX_PATH+DIRECTION_PATHS[i]).c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+            stbi_uc *pixels = stbi_load(TEXTURE_PATHS[i].c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
             VkDeviceSize imageSize = texWidth*texHeight*4;
-
+            textures[i].mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight))))+1;
+            
             if (!pixels) {
-                throw std::runtime_error("Failed to load texture image: "+SKYBOX_PATH+DIRECTION_PATHS[i]);
+                throw std::runtime_error(TEXTURE_PATHS[i]+" failed to load!");
             }
 
             VkBuffer stagingBuffer;
@@ -2114,11 +1987,12 @@ private:
 
             stbi_image_free(pixels);
 
-            createImage(texWidth, texHeight, 1, 1, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, skyboxImages[i], skyboximagememories[i]);
+            createImage(texWidth, texHeight, textures[i].mipLevels, 1, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textures[i].image, textures[i].imageMemory);
 
-            transitionImageLayout(skyboxImages[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1);
-            copyBufferToImage(stagingBuffer, skyboxImages[i], static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-            transitionImageLayout(skyboxImages[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+            transitionImageLayout(textures[i].image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, textures[i].mipLevels);
+            copyBufferToImage(stagingBuffer, textures[i].image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+            
+            generateMipmaps(textures[i].image, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, textures[i].mipLevels);
             
             vkDestroyBuffer(device, stagingBuffer, nullptr);
             vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -2126,14 +2000,8 @@ private:
     }
 
     void createTextureImageViews() {
-        textures.sandAlbedoTexture.imageView = createImageView(textures.sandAlbedoTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, textures.sandAlbedoTexture.mipLevels);
-        textures.sandNormalTexture.imageView = createImageView(textures.sandNormalTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, textures.sandNormalTexture.mipLevels);
-        textures.sandRoughnessTexture.imageView = createImageView(textures.sandRoughnessTexture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, textures.sandRoughnessTexture.mipLevels);
-    }
-
-    void createSkyboxImageViews() {
-        for (int i = 0; i < 6; i++)
-            skyboxImageViews[i] = createImageView(skyboxImages[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+        for (int i = 0; i < TEXTURE_COUNT; i++)
+            textures[i].imageView = createImageView(textures[i].image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, textures[i].mipLevels);
     }
 
     void createTextureSampler() {
@@ -2439,13 +2307,15 @@ private:
         const siv::PerlinNoise::seed_type noiseSeed = 0;
 	    const siv::PerlinNoise noise { noiseSeed };
 
-        int X = 50;
-        int Y = 50;
+        int X = 200;
+        int Y = 200;
         int Z = 50;
 
         lights.clear();
 
         float chunkData[X+1][Y+1][Z+1];
+
+        const float frequency = 0.001f;
 
         for (int i = 0; i <= X; i++) {
             int x = i;
@@ -2455,7 +2325,7 @@ private:
                     int z = k;
 
                     glm::vec3 pos = glm::vec3(x, y, z);
-                    float n = pos.z-(noise.noise3D_01(pos.x*0.02f, pos.y*0.02f, pos.z*0.02f)*0.1f+noise.noise2D_01(pos.x*0.002f, pos.y*0.002f)*0.9f) * Z;
+                    float n = pos.z-(noise.noise3D_01(pos.x*frequency*10.0f, pos.y*frequency*10.0f, pos.z*frequency*10.0f)*0.1f+noise.noise2D_01(pos.x*frequency, pos.y*frequency)*0.9f) * Z;
 
                     chunkData[i][j][k] = n;
 
@@ -2469,7 +2339,7 @@ private:
             }
         }
 
-        isLightsChanged = true;
+        float textureFrequency = 1/50.0f;
 
         for (int i = 0; i < X; i++) {
             int x = i;
@@ -2513,9 +2383,9 @@ private:
                         glm::vec3 normal = glm::normalize(glm::cross(trianglePositions[1]-trianglePositions[0], trianglePositions[2]-trianglePositions[0]));
 
                         for (int j = 0; j < 3; j++) {
-                            glm::vec2 uv = {trianglePositions[j].x*0.5f - x/2, trianglePositions[j].y*0.5f - y/2};
+                            glm::vec2 uv = {trianglePositions[j].x*textureFrequency - floor(x*textureFrequency), trianglePositions[j].y*textureFrequency - floor(y*textureFrequency)};
 
-                            vertices.push_back({trianglePositions[j]*0.1f, {1.0f, 1.0f, 1.0f}, uv, normal});
+                            vertices.push_back({trianglePositions[j]*glm::vec3(0.1f, 0.1f, 1.0f), {1.0f, 1.0f, 1.0f}, uv, normal});
                         }
                     }
 
@@ -2766,7 +2636,7 @@ private:
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*(TEXTURE_COUNT+6));
+        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*TEXTURE_COUNT);
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2837,24 +2707,13 @@ private:
             bufferInfo.range = sizeof(UniformBufferObject);
 
             VkDescriptorImageInfo textureImageInfos[TEXTURE_COUNT];
-            textureImageInfos[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            textureImageInfos[0].imageView = textures.sandAlbedoTexture.imageView;
-            textureImageInfos[0].sampler = textureSampler;
-            textureImageInfos[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            textureImageInfos[1].imageView = textures.sandNormalTexture.imageView;
-            textureImageInfos[1].sampler = textureSampler;
-            textureImageInfos[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            textureImageInfos[2].imageView = textures.sandRoughnessTexture.imageView;
-            textureImageInfos[2].sampler = textureSampler;
-
-            VkDescriptorImageInfo skyboxImageInfos[6];
-            for (int j = 0; j < 6; j++) {
-                skyboxImageInfos[j].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                skyboxImageInfos[j].imageView = skyboxImageViews[j];
-                skyboxImageInfos[j].sampler = skyboxSampler;
+            for (int j = 0; j < TEXTURE_COUNT; j++) {
+                textureImageInfos[j].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                textureImageInfos[j].imageView = textures[j].imageView;
+                textureImageInfos[j].sampler = j < 6 ? skyboxSampler : textureSampler;
             }
 
-            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = offScreenDescriptorSets[i];
@@ -2871,14 +2730,6 @@ private:
             descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[1].descriptorCount = TEXTURE_COUNT;
             descriptorWrites[1].pImageInfo = textureImageInfos;
-
-            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[2].dstSet = offScreenDescriptorSets[i];
-            descriptorWrites[2].dstBinding = 2;
-            descriptorWrites[2].dstArrayElement = 0;
-            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrites[2].descriptorCount = 6;
-            descriptorWrites[2].pImageInfo = skyboxImageInfos;
 
             vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }

@@ -57,7 +57,7 @@ void main() {
     vec3 normal = tempNormal.xyz;
     float specular = tempNormal.w;
     
-    float ambient = 0.1f;
+    float ambient = 0.005f;
     vec3 hdrColor = albedo * ambient; //Hard-coded ambient component
     vec3 viewDirection = normalize(ubo.cameraPosition - position);
 
@@ -68,6 +68,7 @@ void main() {
 
         //Diffuse
         vec3 lightDir = normalize(difference);
+        vec3 H = normalize(lightDir + viewDirection);
         vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * lightBuffer.lights[i].color;
 
         //Specular
@@ -77,12 +78,12 @@ void main() {
         hdrColor += attenuation*(diffuse+spec)*(1.0f-ambient);
     }
 
-    vec3 sunDirection = normalize(vec3(sin(ubo.time*0.1f), cos(ubo.time*0.1f), 1.0));
-    vec3 lightDir = normalize(sunDirection);
-    vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * vec3(1.0);
-    vec3 reflected = reflect(-lightDir, normal);
-    vec3 spec = vec3(1.0) * specular * pow(max(0.0, dot(reflected, viewDirection)), 16.0);
-    hdrColor += diffuse + spec;
+    // vec3 sunDirection = normalize(vec3(sin(ubo.time*0.1f), cos(ubo.time*0.1f), 1.0));
+    // vec3 lightDir = normalize(sunDirection);
+    // vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * vec3(1.0);
+    // vec3 reflected = reflect(-lightDir, normal);
+    // vec3 spec = vec3(1.0) * specular * pow(max(0.0, dot(reflected, viewDirection)), 16.0);
+    // hdrColor += diffuse + spec;
 
     hdrColor += texture(gSamplers[3], fragmentTextureCoordinates).xyz;
   
