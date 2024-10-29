@@ -13,7 +13,7 @@ layout(location = 3) out vec4 gExtra;
 const float SKY_BRIGHTNESS = 2.0f;
 
 void main() {
-    vec4 sampledColor = vec4(0.0f);//texture(textureSamplers[fragmentFaceIndex], fragmentTextureCoordinates);
+    vec4 sampledColor = texture(textureSamplers[fragmentFaceIndex], fragmentTextureCoordinates);
     gPosition = vec4(0.0f);
     gColor = vec4(sampledColor.xyz, 1.0f);
     gNormal = vec4(0.0f, 0.0f, 0.0f, 0.0f);

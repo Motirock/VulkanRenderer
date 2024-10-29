@@ -2,8 +2,14 @@
 
 layout(binding = 1) uniform sampler2D textureSamplers[9];
 
+struct TBN {
+    vec3 T;
+    vec3 B;
+    vec3 N;
+};
+
 layout(binding = 2) readonly buffer PolygonInfoBuffer {
-    mat3 TBNs[2000000];
+    TBN TBNs[30000];
 } polygonInfoBuffer;
 
 layout(location = 0) in vec3 fragmentPosition;
@@ -17,14 +23,19 @@ layout(location = 1) out vec4 gColor;
 layout(location = 2) out vec4 gNormal;
 layout(location = 3) out vec4 gExtra;
 
-//From https://learnopengl.com/PBR/Lighting : {
 vec3 getNormalFromMap() {
-    vec3 tangentNormal = vec3(0.0f, 0.0f, 1.0f) * 2.0 - 1.0;;//texture(textureSamplers[7], fragmentTextureCoordinates).xyz * 2.0 - 1.0;
+    vec3 tangentNormal = normalize(texture(textureSamplers[7], fragmentTextureCoordinates).xyz);//texture(textureSamplers[7], fragmentTextureCoordinates).xyz * 2.0 - 1.0;
 
-    //return normalize(polygonInfoBuffer.TBNs[polygonIndex] * tangentNormal);
-    return polygonInfoBuffer.TBNs[polygonIndex][1];
+    vec3 T = normalize(polygonInfoBuffer.TBNs[polygonIndex].T);
+    vec3 B = normalize(polygonInfoBuffer.TBNs[polygonIndex].B);
+    vec3 N = normalize(polygonInfoBuffer.TBNs[polygonIndex].N);
+
+    return normalize(vec3(  T.x*tangentNormal.x+B.x*tangentNormal.y+N.x*tangentNormal.z,
+                            T.y*tangentNormal.x+B.y*tangentNormal.y+N.y*tangentNormal.z,
+                            T.z*tangentNormal.x+B.z*tangentNormal.y+N.z*tangentNormal.z));
+    //return normalize(texture(textureSamplers[7], fragmentTextureCoordinates).xyz);
 }
-//}
+
 
 void main() {
     gPosition = vec4(fragmentPosition, 1.0);
@@ -33,6 +44,6 @@ void main() {
         discard;
     gColor = vec4(tempColor.xyz, 1.0f);
     gNormal = vec4(getNormalFromMap(), texture(textureSamplers[8], fragmentTextureCoordinates).x);
-    //gNormal = vec4(polygonInfoBuffer.TBNs[polygonIndex][2], 1.0f);
+    // gNormal.xyz = vec3(0.0f, 0.0f, 1.0f);
     gExtra = vec4(0.0f, 0.0f, 0.0f, 0.0f);
 }

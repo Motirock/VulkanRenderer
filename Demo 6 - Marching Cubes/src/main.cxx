@@ -95,12 +95,12 @@ const std::string TEXTURE_PATHS[TEXTURE_COUNT] = {
     SKYBOX_PATH+"right.jpg",
     SKYBOX_PATH+"top.jpg",
     SKYBOX_PATH+"bottom.jpg",
-    "textures/desert_albedo.png",
-    "textures/desert_normal.png",
-    "textures/desert_roughness.png",
+    "textures/dusty_albedo.png",
+    "textures/dusty_normal.png",
+    "textures/dusty_roughness.png",
 };
 
-const uint32_t MAX_POLYGON_COUNT = 200000;
+const uint32_t MAX_POLYGON_COUNT = 30000;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -175,7 +175,13 @@ struct UniformBufferObject {
 };
 
 struct PolygonInfo {
-    alignas(16) glm::mat3 TBN;
+    alignas(16) glm::vec3 tangent;
+    alignas(16) glm::vec3 bitangent;
+    alignas(16) glm::vec3 normal;
+};
+
+struct PolygonInfoBufferObject {
+    PolygonInfo polygonInfos[MAX_POLYGON_COUNT];  
 };
 
 struct Light {
@@ -284,6 +290,7 @@ private:
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<PolygonInfo> polygonInfos;
+    PolygonInfoBufferObject polygonInfoBufferObject;
     VkBuffer vertexBuffer;
     VkBuffer indexBuffer;
     VkBuffer polygonInfoBuffer;
@@ -317,10 +324,15 @@ private:
     std::vector<Light> lights;
     const float LIGHT_SIZE = 1.0f;
     bool isLightBufferChanged = false;
+    const bool SUN_EXISTS = true;
 
     VkBuffer lightBuffer;
     VkDeviceMemory lightBufferMemory;
     void *lightBufferMapped;
+
+    const uint32_t WORLD_X = 80;
+    const uint32_t WORLD_Y = 80;
+    const uint32_t WORLD_Z = 10;
 
     VkDescriptorPool offScreenDescriptorPool;
     VkDescriptorPool computeDescriptorPool;
@@ -442,7 +454,6 @@ private:
         setupDebugMessenger();
 
         createSurface();
-
         pickPhysicalDevice();
         createLogicalDevice();
 
@@ -665,6 +676,8 @@ private:
                 auto currentTime = std::chrono::high_resolution_clock::now();
                 float frameTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count()-time;
                 averageFrameTime += frameTime/TPS;
+
+                // std::cout << time/3.14159f*180.0f << "\n";
                 
                 if (ticks % TPS == 0) {
                     uint32_t vertexCount = vertices.size();
@@ -2324,8 +2337,6 @@ private:
     }
 
     glm::mat3 getTBN(std::vector<glm::vec3> trianglePositions, std::vector<glm::vec2> uvs, glm::vec3 normal) {
-        const glm::mat3 normalMatrix = transpose(inverse(glm::mat3(glm::mat4(1.0f))));
-
         glm::vec3 V0 = trianglePositions[0];
         glm::vec3 V1 = trianglePositions[1];
         glm::vec3 V2 = trianglePositions[2];
@@ -2351,20 +2362,18 @@ private:
 
         // Normalize T and B
         T = glm::normalize(T);
-        B = glm::normalize(B);
+        B = glm::cross(normal, T);
 
         // Use the provided normal vector (you can also calculate it if needed)
         glm::vec3 N = glm::normalize(normal);
 
         // Create TBN matrix
-        glm::mat3 TBN;
-        TBN[0] = T;  // First column: Tangent
-        TBN[1] = B;  // Second column: Bitangent
-        TBN[2] = N;  // Third column: Normal
+        glm::mat3 TBN = glm::mat3(T, B, N);
+        
 
-        std::cout << T[0] << ' ' << B[0] << ' ' << N[0] << '\n';
-        std::cout << T[1] << ' ' << B[1] << ' ' << N[1] << '\n';
-        std::cout << T[2] << ' ' << B[2] << ' ' << N[2] << '\n';
+        // std::cout << T[0] << ' ' << B[0] << ' ' << N[0] << '\n';
+        // std::cout << T[1] << ' ' << B[1] << ' ' << N[1] << '\n';
+        // std::cout << T[2] << ' ' << B[2] << ' ' << N[2] << '\n';
 
         return TBN;
     }
@@ -2373,25 +2382,21 @@ private:
         const siv::PerlinNoise::seed_type noiseSeed = 0;
 	    const siv::PerlinNoise noise { noiseSeed };
 
-        int X = 20;
-        int Y = 20;
-        int Z = 20;
-
         lights.clear();
 
-        float chunkData[X+1][Y+1][Z+1];
+        float chunkData[WORLD_X+1][WORLD_Y+1][WORLD_Z+1];
 
-        const float frequency = 0.01f;
+        const float frequency = 0.1f;
 
-        for (int i = 0; i <= X; i++) {
+        for (int i = 0; i <= WORLD_X; i++) {
             int x = i;
-            for (int j = 0; j <= Y; j++) {
+            for (int j = 0; j <= WORLD_Y; j++) {
                 int y = j;
-                for (int k = 0; k <= Z; k++) {
+                for (int k = 0; k <= WORLD_Z; k++) {
                     int z = k;
 
                     glm::vec3 pos = glm::vec3(x, y, z);
-                    float n = pos.z-(noise.noise3D_01(pos.x*frequency*10.0f, pos.y*frequency*10.0f, pos.z*frequency*10.0f)*0.1f+noise.noise2D_01(pos.x*frequency, pos.y*frequency)*0.9f) * Z;
+                    float n = pos.z-(noise.noise3D_01(pos.x*frequency*10.0f, pos.y*frequency*10.0f, pos.z*frequency*10.0f)*0.1f+noise.noise2D_01(pos.x*frequency, pos.y*frequency)*0.9f) * WORLD_Z;
 
                     chunkData[i][j][k] = n;
 
@@ -2407,11 +2412,11 @@ private:
 
         float textureFrequency = 1/5.0f;
 
-        for (int i = 0; i < X; i++) {
+        for (int i = 0; i < WORLD_X; i++) {
             int x = i;
-            for (int j = 0; j < Y; j++) {
+            for (int j = 0; j < WORLD_Y; j++) {
                 int y = j;
-                for (int k = 0; k < Z; k++) {
+                for (int k = 0; k < WORLD_Z; k++) {
                     int z = k;
 
                     const glm::vec3 positions[8] = {
@@ -2426,14 +2431,14 @@ private:
                     };
 
                     const float data[8] = {
-                        chunkData[x+0][y+0][z+0],
-                        chunkData[x+1][y+0][z+0],
-                        chunkData[x+1][y+0][z+1],
-                        chunkData[x+0][y+0][z+1],
-                        chunkData[x+0][y+1][z+0],
-                        chunkData[x+1][y+1][z+0],
-                        chunkData[x+1][y+1][z+1],
-                        chunkData[x+0][y+1][z+1]
+                        chunkData[i+0][j+0][k+0],
+                        chunkData[i+1][j+0][k+0],
+                        chunkData[i+1][j+0][k+1],
+                        chunkData[i+0][j+0][k+1],
+                        chunkData[i+0][j+1][k+0],
+                        chunkData[i+1][j+1][k+0],
+                        chunkData[i+1][j+1][k+1],
+                        chunkData[i+0][j+1][k+1]
                     };
 
                     GridCell cell;
@@ -2453,16 +2458,15 @@ private:
                         };
 
                         glm::vec3 normal = glm::normalize(glm::cross(trianglePositions[1]-trianglePositions[0], trianglePositions[2]-trianglePositions[0]));
-                        
+
                         glm::mat3 TBN = getTBN(trianglePositions, uvs, normal);
 
                         for (int j = 0; j < 3; j++) {
                             vertices.push_back({trianglePositions[j], {1.0f, 1.0f, 1.0f}, uvs[j], normal});
                         }
 
-                        polygonInfos.push_back({TBN});
+                        polygonInfos.push_back({TBN[0], TBN[1], TBN[2]});
                     }
-
                 }
             }
         }
@@ -2483,12 +2487,12 @@ private:
         vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
-        polygonInfos.push_back({glm::mat3(1.0f)}); //??? FIX
+        polygonInfos.push_back({glm::vec3(1.0f), glm::vec3(1.0f), glm::vec3(1.0f)});
 
         vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
-        polygonInfos.push_back({glm::mat3(1.0f)});
+        polygonInfos.push_back({glm::vec3(1.0f), glm::vec3(1.0f), glm::vec3(1.0f)});
 
         createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
         std::cout << vertices.size()*sizeof(Vertex) << '\n';
@@ -2534,17 +2538,24 @@ private:
     } 
 
     void createPolygonBuffer() {
-        VkDeviceSize bufferSize = sizeof(PolygonInfo)*MAX_POLYGON_COUNT;
+        std::cout << "\n\n\n\n\n" << sizeof(PolygonInfo)*polygonInfos.size() << '\n' << sizeof(PolygonInfoBufferObject) << "\n\n\n\n\n";
+        PolygonInfoBufferObject polygonInfoBufferObject{};
+        //memcpy(polygonInfoBufferObject.polygonInfos, polygonInfos.data(), sizeof(PolygonInfo)*polygonInfos.size());
+        for (int i = 0; i < polygonInfos.size(); i++) {
+            polygonInfoBufferObject.polygonInfos[i] = polygonInfos[i];
+        }
+
+        VkDeviceSize bufferSize = sizeof(PolygonInfoBufferObject);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, polygonInfoBuffer, polygonInfoBufferMemory);
 
         vkMapMemory(device, polygonInfoBufferMemory, 0, bufferSize, 0, &polygonInfoBufferMapped);
-            memcpy(polygonInfoBufferMapped, polygonInfos.data(), (size_t) (static_cast<size_t>(polygonInfos.size())*sizeof(PolygonInfo)));
-        vkUnmapMemory(device, polygonInfoBufferMemory);
+
+        memcpy(polygonInfoBufferMapped, &polygonInfoBufferObject, (size_t) bufferSize);
     }
 
     void createLightVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(LightVertex)*12*MAX_LIGHTS;
+        VkDeviceSize bufferSize = sizeof(LightVertex)*8*(MAX_LIGHTS+1);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightVertexBuffer, lightVertexBufferMemory);
 
@@ -2552,7 +2563,7 @@ private:
     }
 
     void createLightIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(uint32_t)*36*MAX_LIGHTS;
+        VkDeviceSize bufferSize = sizeof(uint32_t)*36*(MAX_LIGHTS+1);
 
         createBuffer(bufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightIndexBuffer, lightIndexBufferMemory);
 
@@ -2726,7 +2737,7 @@ private:
             lightIndices.push_back(i*8+3);
         }
 
-        memcpy(lightVertexBufferMapped, lightVertices.data(), sizeof(Vertex)*lightVertices.size());
+        memcpy(lightVertexBufferMapped, lightVertices.data(), sizeof(LightVertex)*lightVertices.size());
         memcpy(lightIndexBufferMapped, lightIndices.data(), sizeof(uint32_t)*lightIndices.size());
     }
 
@@ -2817,7 +2828,7 @@ private:
             VkDescriptorBufferInfo polygonInfoBufferInfo{};
             polygonInfoBufferInfo.buffer = polygonInfoBuffer;
             polygonInfoBufferInfo.offset = 0;
-            polygonInfoBufferInfo.range = sizeof(PolygonInfo)*MAX_POLYGON_COUNT;
+            polygonInfoBufferInfo.range = sizeof(PolygonInfoBufferObject);
 
             std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
@@ -3227,7 +3238,7 @@ private:
 			vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
             vkCmdBindIndexBuffer(commandBuffer, lightIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
-            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(lightIndices.size()), 1, 0, 0, 0);
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(lightIndices.size()+SUN_EXISTS*36), 1, 0, 0, 0);
             }
 
             {
@@ -3616,6 +3627,82 @@ private:
         isLightsChanged = false;
     }
 
+    void updateSun() {
+        float radius = 100.0f;
+
+        Light sun;
+        sun.position = glm::vec3(40, 40, 20)+500.0f*glm::vec3(sin(time), cos(time), 1.0f);
+        sun.color = glm::vec3(0.8f, 1.0f, 0.8f);
+        sun.strength = 1.0f;
+
+        uint32_t originalVertexCount = static_cast<uint32_t>(lightVertices.size());
+
+        std::vector<LightVertex> sunVertices;
+        std::vector<uint32_t> sunIndices;
+
+        //Bottom of cube
+        sunVertices.push_back({ sun.position+glm::vec3(-radius, -radius, -radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3( radius, -radius, -radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3(-radius,  radius, -radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3( radius,  radius, -radius), sun.color, sun.strength });
+        //Top of cube
+        sunVertices.push_back({ sun.position+glm::vec3(-radius, -radius,  radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3( radius, -radius,  radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3(-radius,  radius,  radius), sun.color, sun.strength });
+        sunVertices.push_back({ sun.position+glm::vec3( radius,  radius,  radius), sun.color, sun.strength });
+
+        //Positive x (front)
+        sunIndices.push_back(1);
+        sunIndices.push_back(3);
+        sunIndices.push_back(5);
+        sunIndices.push_back(7);
+        sunIndices.push_back(5);
+        sunIndices.push_back(3);
+
+        //Negative x (back)
+        sunIndices.push_back(0);
+        sunIndices.push_back(4);
+        sunIndices.push_back(2);
+        sunIndices.push_back(6);
+        sunIndices.push_back(2);
+        sunIndices.push_back(4);
+
+        //Positive y (left)
+        sunIndices.push_back(2);
+        sunIndices.push_back(7);
+        sunIndices.push_back(3);
+        sunIndices.push_back(2);
+        sunIndices.push_back(6);
+        sunIndices.push_back(7);
+
+        //Negative y (right)
+        sunIndices.push_back(0);
+        sunIndices.push_back(1);
+        sunIndices.push_back(5);
+        sunIndices.push_back(0);
+        sunIndices.push_back(5);
+        sunIndices.push_back(4);
+
+        //Positive z (top)
+        sunIndices.push_back(5);
+        sunIndices.push_back(7);
+        sunIndices.push_back(4);
+        sunIndices.push_back(6);
+        sunIndices.push_back(4);
+        sunIndices.push_back(7);
+
+        //Negative z (bottom)
+        sunIndices.push_back(3);
+        sunIndices.push_back(1);
+        sunIndices.push_back(0);
+        sunIndices.push_back(0);
+        sunIndices.push_back(2);
+        sunIndices.push_back(3);
+
+        memcpy(lightVertexBufferMapped+originalVertexCount*sizeof(LightVertex), sunVertices.data(), sizeof(LightVertex)*sunVertices.size());
+        memcpy(lightIndexBufferMapped+originalVertexCount*sizeof(uint32_t)*9/2, sunIndices.data(), sizeof(uint32_t)*sunIndices.size());
+    }
+
     void update() {
         //std::cout << viewAngles.x << " " << viewAngles.y << std::endl;
     }
@@ -3645,6 +3732,8 @@ private:
         updateUniformBuffer(currentFrame);
         if (isLightsChanged)
             updateLightBuffer();
+        if (SUN_EXISTS)
+            updateSun();
 
         vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
