@@ -100,6 +100,8 @@ const std::string TEXTURE_PATHS[TEXTURE_COUNT] = {
     "textures/desert_roughness.png",
 };
 
+const uint32_t MAX_POLYGON_COUNT = 200000;
+
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
 const std::vector<const char*> validationLayers = {
@@ -170,6 +172,10 @@ struct UniformBufferObject {
     float time;
     float gamma;
     float exposure;
+};
+
+struct PolygonInfo {
+    alignas(16) glm::mat3 TBN;
 };
 
 struct Light {
@@ -277,12 +283,16 @@ private:
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<PolygonInfo> polygonInfos;
     VkBuffer vertexBuffer;
     VkBuffer indexBuffer;
+    VkBuffer polygonInfoBuffer;
     VkDeviceMemory vertexBufferMemory;
     VkDeviceMemory indexBufferMemory;
+    VkDeviceMemory polygonInfoBufferMemory;
     void *vertexData;
     void *indexData;
+    void *polygonInfoBufferMapped;
 
     bool isLightsChanged = false;
     std::vector<LightVertex> lightVertices;
@@ -568,7 +578,7 @@ private:
             lights.push_back(Light{
                 glm::vec3(cameraPosition.x, cameraPosition.y, cameraPosition.z),
                 glm::vec3(r, g, b),
-                1.0f
+                5.0f
             });
 
             isLightsChanged = true;
@@ -744,7 +754,7 @@ private:
             textures[i].cleanup(device);
 
         vkDestroySampler(device, textureSampler, nullptr);
-
+        vkDestroySampler(device, skyboxSampler, nullptr);
         vkDestroySampler(device, compositionSampler, nullptr);
 
         vkDestroyDescriptorSetLayout(device, offScreenDescriptorSetLayout, nullptr);
@@ -756,6 +766,9 @@ private:
 
         vkDestroyBuffer(device, indexBuffer, nullptr);
         vkFreeMemory(device, indexBufferMemory, nullptr);
+
+        vkDestroyBuffer(device, polygonInfoBuffer, nullptr);
+        vkFreeMemory(device, polygonInfoBufferMemory, nullptr);
 
         vkDestroyBuffer(device, lightVertexBuffer, nullptr);
         vkFreeMemory(device, lightVertexBufferMemory, nullptr);
@@ -1240,7 +1253,14 @@ private:
         samplerLayoutBinding.pImmutableSamplers = nullptr;
         samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings = {uboLayoutBinding, samplerLayoutBinding};
+        VkDescriptorSetLayoutBinding polygonInfoBufferLayoutBinding{};
+        polygonInfoBufferLayoutBinding.binding = 2;
+        polygonInfoBufferLayoutBinding.descriptorCount = 1;
+        polygonInfoBufferLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        polygonInfoBufferLayoutBinding.pImmutableSamplers = nullptr;
+        polygonInfoBufferLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings = {uboLayoutBinding, samplerLayoutBinding, polygonInfoBufferLayoutBinding};
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -2303,19 +2323,65 @@ private:
         endSingleTimeCommands(commandBuffer);
     }
 
+    glm::mat3 getTBN(std::vector<glm::vec3> trianglePositions, std::vector<glm::vec2> uvs, glm::vec3 normal) {
+        const glm::mat3 normalMatrix = transpose(inverse(glm::mat3(glm::mat4(1.0f))));
+
+        glm::vec3 V0 = trianglePositions[0];
+        glm::vec3 V1 = trianglePositions[1];
+        glm::vec3 V2 = trianglePositions[2];
+
+        glm::vec2 UV0 = uvs[0];
+        glm::vec2 UV1 = uvs[1];
+        glm::vec2 UV2 = uvs[2];
+
+        // Calculate edges
+        glm::vec3 E1 = V1 - V0;
+        glm::vec3 E2 = V2 - V0;
+
+        // Calculate UV differences
+        glm::vec2 dUV1 = UV1 - UV0;
+        glm::vec2 dUV2 = UV2 - UV0;
+
+        // Calculate the determinant (r)
+        float r = 1.0f / (dUV1.x * dUV2.y - dUV1.y * dUV2.x);
+
+        // Calculate Tangent and Bitangent
+        glm::vec3 T = r * (dUV2.y * E1 - dUV1.y * E2);
+        glm::vec3 B = r * (-dUV2.x * E1 + dUV1.x * E2);
+
+        // Normalize T and B
+        T = glm::normalize(T);
+        B = glm::normalize(B);
+
+        // Use the provided normal vector (you can also calculate it if needed)
+        glm::vec3 N = glm::normalize(normal);
+
+        // Create TBN matrix
+        glm::mat3 TBN;
+        TBN[0] = T;  // First column: Tangent
+        TBN[1] = B;  // Second column: Bitangent
+        TBN[2] = N;  // Third column: Normal
+
+        std::cout << T[0] << ' ' << B[0] << ' ' << N[0] << '\n';
+        std::cout << T[1] << ' ' << B[1] << ' ' << N[1] << '\n';
+        std::cout << T[2] << ' ' << B[2] << ' ' << N[2] << '\n';
+
+        return TBN;
+    }
+
     void buildWorld() {
         const siv::PerlinNoise::seed_type noiseSeed = 0;
 	    const siv::PerlinNoise noise { noiseSeed };
 
-        int X = 200;
-        int Y = 200;
-        int Z = 50;
+        int X = 20;
+        int Y = 20;
+        int Z = 20;
 
         lights.clear();
 
         float chunkData[X+1][Y+1][Z+1];
 
-        const float frequency = 0.001f;
+        const float frequency = 0.01f;
 
         for (int i = 0; i <= X; i++) {
             int x = i;
@@ -2339,7 +2405,7 @@ private:
             }
         }
 
-        float textureFrequency = 1/50.0f;
+        float textureFrequency = 1/5.0f;
 
         for (int i = 0; i < X; i++) {
             int x = i;
@@ -2380,32 +2446,55 @@ private:
 
                     for (int i = 0; i < vertexPositions.size(); i++) {
                         std::vector<glm::vec3> trianglePositions = vertexPositions[i];
+                        std::vector<glm::vec2> uvs = {
+                            glm::vec2(trianglePositions[0].x*textureFrequency, trianglePositions[0].y*textureFrequency),
+                            glm::vec2(trianglePositions[1].x*textureFrequency, trianglePositions[1].y*textureFrequency),
+                            glm::vec2(trianglePositions[2].x*textureFrequency, trianglePositions[2].y*textureFrequency)
+                        };
+
                         glm::vec3 normal = glm::normalize(glm::cross(trianglePositions[1]-trianglePositions[0], trianglePositions[2]-trianglePositions[0]));
+                        
+                        glm::mat3 TBN = getTBN(trianglePositions, uvs, normal);
 
                         for (int j = 0; j < 3; j++) {
-                            glm::vec2 uv = {trianglePositions[j].x*textureFrequency - floor(x*textureFrequency), trianglePositions[j].y*textureFrequency - floor(y*textureFrequency)};
-
-                            vertices.push_back({trianglePositions[j]*glm::vec3(0.1f, 0.1f, 1.0f), {1.0f, 1.0f, 1.0f}, uv, normal});
+                            vertices.push_back({trianglePositions[j], {1.0f, 1.0f, 1.0f}, uvs[j], normal});
                         }
+
+                        polygonInfos.push_back({TBN});
                     }
 
                 }
             }
         }
 
-        // Create a black square from 0 to 1 in both x and y
+        //Create a square from 0 to 1 in both x and y //???
+        std::vector<glm::vec3> squarePositions = {
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(1.0f, 0.0f, 0.0f),
+            glm::vec3(1.0f, 1.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        };
+        std::vector<glm::vec2> squareUVs = {
+            glm::vec2(0.0f, 0.0f),
+            glm::vec2(1.0f, 0.0f),
+            glm::vec2(1.0f, 1.0f),
+            glm::vec2(0.0f, 1.0f)
+        };
         vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
+        polygonInfos.push_back({glm::mat3(1.0f)}); //??? FIX
 
         vertices.push_back({{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}});
         vertices.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+        polygonInfos.push_back({glm::mat3(1.0f)});
 
         createVertexBuffer(vertexBuffer, vertexBufferMemory, vertices.size()*sizeof(Vertex), vertices.data());
         std::cout << vertices.size()*sizeof(Vertex) << '\n';
         indices.push_back(0);
         createIndexBuffer(indexBuffer, indexBufferMemory, indices.size()*sizeof(uint32_t), indices.data());
+        createPolygonBuffer();
     }
 
     void createVertexBuffer(VkBuffer &vertexBuffer, VkDeviceMemory &vertexBufferMemory, VkDeviceSize bufferSize, void *vertexData) {
@@ -2443,6 +2532,16 @@ private:
         vkDestroyBuffer(device, stagingBuffer, nullptr);
         vkFreeMemory(device, stagingBufferMemory, nullptr);
     } 
+
+    void createPolygonBuffer() {
+        VkDeviceSize bufferSize = sizeof(PolygonInfo)*MAX_POLYGON_COUNT;
+
+        createBuffer(bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, polygonInfoBuffer, polygonInfoBufferMemory);
+
+        vkMapMemory(device, polygonInfoBufferMemory, 0, bufferSize, 0, &polygonInfoBufferMapped);
+            memcpy(polygonInfoBufferMapped, polygonInfos.data(), (size_t) (static_cast<size_t>(polygonInfos.size())*sizeof(PolygonInfo)));
+        vkUnmapMemory(device, polygonInfoBufferMemory);
+    }
 
     void createLightVertexBuffer() {
         VkDeviceSize bufferSize = sizeof(LightVertex)*12*MAX_LIGHTS;
@@ -2632,11 +2731,13 @@ private:
     }
 
     void createOffScreenDescriptorPool() {
-        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        std::array<VkDescriptorPoolSize, 3> poolSizes{};
         poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
         poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT*TEXTURE_COUNT);
+        poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2701,10 +2802,10 @@ private:
         }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBuffers[i];
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
+            VkDescriptorBufferInfo uniformBufferInfo{};
+            uniformBufferInfo.buffer = uniformBuffers[i];
+            uniformBufferInfo.offset = 0;
+            uniformBufferInfo.range = sizeof(UniformBufferObject);
 
             VkDescriptorImageInfo textureImageInfos[TEXTURE_COUNT];
             for (int j = 0; j < TEXTURE_COUNT; j++) {
@@ -2713,7 +2814,12 @@ private:
                 textureImageInfos[j].sampler = j < 6 ? skyboxSampler : textureSampler;
             }
 
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+            VkDescriptorBufferInfo polygonInfoBufferInfo{};
+            polygonInfoBufferInfo.buffer = polygonInfoBuffer;
+            polygonInfoBufferInfo.offset = 0;
+            polygonInfoBufferInfo.range = sizeof(PolygonInfo)*MAX_POLYGON_COUNT;
+
+            std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
 
             descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[0].dstSet = offScreenDescriptorSets[i];
@@ -2721,7 +2827,7 @@ private:
             descriptorWrites[0].dstArrayElement = 0;
             descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].pBufferInfo = &bufferInfo;
+            descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
 
             descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             descriptorWrites[1].dstSet = offScreenDescriptorSets[i];
@@ -2730,6 +2836,14 @@ private:
             descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             descriptorWrites[1].descriptorCount = TEXTURE_COUNT;
             descriptorWrites[1].pImageInfo = textureImageInfos;
+
+            descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrites[2].dstSet = offScreenDescriptorSets[i];
+            descriptorWrites[2].dstBinding = 2;
+            descriptorWrites[2].dstArrayElement = 0;
+            descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            descriptorWrites[2].descriptorCount = 1;
+            descriptorWrites[2].pBufferInfo = &polygonInfoBufferInfo;
 
             vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
         }
@@ -3400,6 +3514,7 @@ private:
         ));
 
         UniformBufferObject ubo{};
+
         ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.view = glm::lookAt(cameraPosition, cameraPosition+viewDirection, glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(FOV), swapChainExtent.width / (float) swapChainExtent.height, nearPlane, farPlane);

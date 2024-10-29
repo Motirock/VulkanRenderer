@@ -1,5 +1,7 @@
 #version 450
 
+const float PI = 3.14159265359;
+
 struct Light {
     vec3 position;
     vec3 color;
@@ -42,6 +44,47 @@ float magnitude(in vec3 v) {
     return sqrt(dot(v, v));
 }
 
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom   = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / denom;
+}
+// ----------------------------------------------------------------------------
+float GeometrySchlickGGX(float NdotV, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+// ----------------------------------------------------------------------------
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+// ----------------------------------------------------------------------------
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+// --------------
+
 void main() {
     vec4 tempPosition = texture(gSamplers[0], fragmentTextureCoordinates);
     vec3 position = tempPosition.xyz;
@@ -55,35 +98,87 @@ void main() {
 
     vec4 tempNormal = texture(gSamplers[2], fragmentTextureCoordinates);
     vec3 normal = tempNormal.xyz;
-    float specular = tempNormal.w;
+    float roughness = tempNormal.w;
+
+    outColor = vec4(normal, 1.0f);
+    return;
     
     float ambient = 0.005f;
     vec3 hdrColor = albedo * ambient; //Hard-coded ambient component
     vec3 viewDirection = normalize(ubo.cameraPosition - position);
 
-    for (int i = 0; i < lightBuffer.lightCount; i++) {
-        vec3 difference = lightBuffer.lights[i].position - position;
-        float attenuation = lightBuffer.lights[i].strength/(difference.x*difference.x+difference.y*difference.y+difference.z*difference.z+1.0f);
-        //if (attenuation < 0.01f) continue; //Useless. :(
+    vec3 V = normalize(ubo.cameraPosition-position);
+    vec3 N = normal;
+    float metallic = 0.0f;
+    vec3 F0 = vec3(0.04); 
+    F0 = mix(F0, albedo, metallic);
 
-        //Diffuse
-        vec3 lightDir = normalize(difference);
-        vec3 H = normalize(lightDir + viewDirection);
-        vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * lightBuffer.lights[i].color;
 
-        //Specular
-        vec3 reflected = reflect(-lightDir, normal);
-        vec3 spec = lightBuffer.lights[i].color * specular * pow(max(0.0, dot(reflected, viewDirection)), 16.0);
+    for(int i = 0; i < lightBuffer.lightCount; i++)  {
+        // calculate per-light radiance
+        vec3 L = normalize(lightBuffer.lights[i].position - position);
+        vec3 H = normalize(ubo.viewDirection + L);
+        float distance = length(lightBuffer.lights[i].position - position);
+        float attenuation = lightBuffer.lights[i].strength / (distance * distance);
+        vec3 radiance = lightBuffer.lights[i].color * attenuation;
 
-        hdrColor += attenuation*(diffuse+spec)*(1.0f-ambient);
+        // Cook-Torrance BRDF
+        float NDF = DistributionGGX(N, H, roughness);   
+        float G   = GeometrySmith(N, V, L, roughness);      
+        vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+           
+        vec3 numerator    = NDF * G * F; 
+        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
+        vec3 specular = numerator / denominator;
+        
+        // kS is equal to Fresnel
+        vec3 kS = F;
+        // for energy conservation, the diffuse and specular light can't
+        // be above 1.0 (unless the surface emits light); to preserve this
+        // relationship the diffuse component (kD) should equal 1.0 - kS.
+        vec3 kD = vec3(1.0) - kS;
+        // multiply kD by the inverse metalness such that only non-metals 
+        // have diffuse lighting, or a linear blend if partly metal (pure metals
+        // have no diffuse light).
+        kD *= 1.0 - metallic;	  
+
+        // scale light by NdotL
+        float NdotL = max(dot(N, L), 0.0);        
+
+        // add to outgoing radiance Lo
+        hdrColor += (kD * albedo / PI + specular) * radiance * NdotL;  // note that we already multiplied the BRDF by the Fresnel (kS) so we won't multiply by kS again
     }
 
-    // vec3 sunDirection = normalize(vec3(sin(ubo.time*0.1f), cos(ubo.time*0.1f), 1.0));
-    // vec3 lightDir = normalize(sunDirection);
-    // vec3 diffuse = max(dot(normal, lightDir), 0.0) * albedo * vec3(1.0);
-    // vec3 reflected = reflect(-lightDir, normal);
-    // vec3 spec = vec3(1.0) * specular * pow(max(0.0, dot(reflected, viewDirection)), 16.0);
-    // hdrColor += diffuse + spec;
+    // calculate per-light radiance
+    vec3 L = normalize(vec3(1.0f));
+    vec3 H = normalize(ubo.viewDirection + L);
+    vec3 radiance = vec3(0.0f);
+
+    // Cook-Torrance BRDF
+    float NDF = DistributionGGX(N, H, roughness);   
+    float G   = GeometrySmith(N, V, L, roughness);      
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        
+    vec3 numerator    = NDF * G * F; 
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; // + 0.0001 to prevent divide by zero
+    vec3 specular = numerator / denominator;
+    
+    // kS is equal to Fresnel
+    vec3 kS = F;
+    // for energy conservation, the diffuse and specular light can't
+    // be above 1.0 (unless the surface emits light); to preserve this
+    // relationship the diffuse component (kD) should equal 1.0 - kS.
+    vec3 kD = vec3(1.0) - kS;
+    // multiply kD by the inverse metalness such that only non-metals 
+    // have diffuse lighting, or a linear blend if partly metal (pure metals
+    // have no diffuse light).
+    kD *= 1.0 - metallic;	  
+
+    // scale light by NdotL
+    float NdotL = max(dot(N, L), 0.0);        
+
+    // add to outgoing radiance Lo
+    hdrColor += (kD * albedo / PI + specular) * radiance * NdotL;  // note that we already multiplied the BRDF by the Fresnel (kS) so we won't multiply by kS again
 
     hdrColor += texture(gSamplers[3], fragmentTextureCoordinates).xyz;
   

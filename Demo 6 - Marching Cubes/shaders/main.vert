@@ -22,6 +22,7 @@ layout(location = 0) out vec3 fragmentPosition;
 layout(location = 1) out vec3 fragmentColor;
 layout(location = 2) out vec2 fragmentTextureCoordinates;
 layout(location = 3) out vec3 fragmentNormal;
+layout(location = 4) flat out int polygonIndex;
 
 void main() {
     gl_Position = ubo.projection * ubo.view * ubo.model * vec4(inPosition, 1.0);
@@ -29,4 +30,5 @@ void main() {
     fragmentColor = inColor;
     fragmentTextureCoordinates = inTextureCoordinates;
     fragmentNormal = inNormal;
+    polygonIndex = gl_VertexIndex/3;
 }
