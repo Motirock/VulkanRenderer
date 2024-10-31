@@ -68,9 +68,6 @@ glslc shaders/bloom.comp -o shaders/bloom.comp.spv
 
 using namespace VkUtils;
 
-using namespace std::this_thread; //Sleep_for, sleep_until
-using namespace std::chrono; //Nanoseconds, system_clock, seconds
-
 const uint32_t WIDTH = 1600;
 const uint32_t HEIGHT = 900;
 
@@ -147,7 +144,11 @@ struct SwapChainSupportDetails {
 
 struct UniformBufferObject {
     alignas(16) glm::mat4 view;
-    alignas(16) glm::mat4 proj;
+    alignas(16) glm::mat4 projection;
+    alignas(16) glm::mat4 reflectView;
+    alignas(16) glm::mat4 reflectProjection;
+    alignas(16) glm::mat4 refractView;
+    alignas(16) glm::mat4 refractProjection;
     alignas(16) glm::vec3 cameraPosition;
     alignas(16) glm::vec3 viewDirection;
     float nearPlane;
@@ -304,6 +305,7 @@ private:
     const uint32_t WORLD_X = 80;
     const uint32_t WORLD_Y = 80;
     const uint32_t WORLD_Z = 10;
+    const float SEA_LEVEL = WORLD_Z/2.0f;
 
     VkDescriptorPool offScreenDescriptorPool;
     VkDescriptorPool computeDescriptorPool;
@@ -890,6 +892,7 @@ private:
         }
 
         VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.shaderClipDistance = VK_TRUE;
 
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1386,10 +1389,17 @@ private:
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
+        VkPushConstantRange pushConstantRanges[1];
+        pushConstantRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushConstantRanges[0].offset = 0;
+        pushConstantRanges[0].size = sizeof(uint32_t)*2;
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &offScreenDescriptorSetLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges;
 
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &mainPipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create pipeline layout!");
@@ -1518,10 +1528,17 @@ private:
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
+        VkPushConstantRange pushConstantRanges[1];
+        pushConstantRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushConstantRanges[0].offset = 0;
+        pushConstantRanges[0].size = sizeof(uint32_t)*2;
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &offScreenDescriptorSetLayout;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges;
 
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &lightPipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create pipeline layout!");
@@ -1650,17 +1667,17 @@ private:
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(uint32_t);
+        VkPushConstantRange pushConstantRanges[1];
+        pushConstantRanges[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushConstantRanges[0].offset = 0;
+        pushConstantRanges[0].size = sizeof(uint32_t)*3;
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &offScreenDescriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges;
 
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &skyboxPipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create pipeline layout!");
@@ -1702,17 +1719,17 @@ private:
         computeShaderStageInfo.module = computeShaderModule;
         computeShaderStageInfo.pName = "main";
 
-        VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(uint32_t)*3;
+        VkPushConstantRange pushConstantRanges[1];
+        pushConstantRanges[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        pushConstantRanges[0].offset = 0;
+        pushConstantRanges[0].size = sizeof(uint32_t)*3;
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges;
 
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &bloomPipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create compute pipeline layout!");
@@ -1826,17 +1843,17 @@ private:
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(uint32_t);
+        VkPushConstantRange pushConstantRanges[1];
+        pushConstantRanges[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushConstantRanges[0].offset = 0;
+        pushConstantRanges[0].size = sizeof(uint32_t);
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &onScreenDescriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+        pipelineLayoutInfo.pPushConstantRanges = pushConstantRanges;
 
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &compositionPipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("Failed to create pipeline layout!");
@@ -3167,6 +3184,15 @@ private:
             {
             VkBuffer vertexBuffers[] = {vertexBuffer};
             VkDeviceSize offsets[] = {0};
+
+            struct {
+                uint32_t isWater;
+                uint32_t isReflect;
+            } waterPushConstant;
+            waterPushConstant.isWater = false;
+            waterPushConstant.isReflect = false;
+
+            vkCmdPushConstants(commandBuffer, mainPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(waterPushConstant), &waterPushConstant);
             
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mainPipeline);
@@ -3178,6 +3204,15 @@ private:
             {
             VkBuffer vertexBuffers[] = {lightVertexBuffer};
             VkDeviceSize offsets[] = {0};
+
+            struct {
+                uint32_t isWater;
+                uint32_t isReflect;
+            } waterPushConstant;
+            waterPushConstant.isWater = false;
+            waterPushConstant.isReflect = false;
+
+            vkCmdPushConstants(commandBuffer, lightPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(waterPushConstant), &waterPushConstant);
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lightPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lightPipeline);
@@ -3192,11 +3227,15 @@ private:
             VkDeviceSize offsets[] = {0};
 
             struct {
+                uint32_t isWater;
+                uint32_t isReflect;
                 uint32_t isDay;
-            } pushConstant;
-            pushConstant.isDay = (uint32_t) isDay;
+            } waterAndDayPushConstant;
+            waterAndDayPushConstant.isWater = false;
+            waterAndDayPushConstant.isReflect = false;
+            waterAndDayPushConstant.isDay = (uint32_t) isDay;
 
-            vkCmdPushConstants(commandBuffer, skyboxPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstant), &pushConstant);
+            vkCmdPushConstants(commandBuffer, skyboxPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(waterAndDayPushConstant), &waterAndDayPushConstant);
 
             vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipelineLayout, 0, 1, &offScreenDescriptorSets[currentFrame], 0, nullptr);
 			vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, skyboxPipeline);
@@ -3475,7 +3514,6 @@ private:
 
         viewAngles.x = fmod(viewAngles.x, 360.0f);
         viewAngles.y = fmod(viewAngles.y, 360.0f);
-        
         viewDirection = glm::normalize(glm::vec3(
             std::cos(glm::radians(-viewAngles.x))*std::cos(glm::radians(viewAngles.y)), 
             std::sin(glm::radians(-viewAngles.x))*std::cos(glm::radians(viewAngles.y)), 
@@ -3485,10 +3523,32 @@ private:
         UniformBufferObject ubo{};
 
         ubo.view = glm::lookAt(cameraPosition, cameraPosition+viewDirection, glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.proj = glm::perspective(glm::radians(FOV), swapChainExtent.width / (float) swapChainExtent.height, nearPlane, farPlane);
-        ubo.proj[1][1] *= -1;
+        ubo.projection = glm::perspective(glm::radians(FOV), swapChainExtent.width / (float) swapChainExtent.height, nearPlane, farPlane);
+        ubo.projection[1][1] *= -1;
+
+        glm::vec3 reflectCameraPosition = glm::vec3(cameraPosition.x , cameraPosition.y, cameraPosition.z-2.0f*(cameraPosition.z-SEA_LEVEL));
+        glm::vec3 reflectViewDirection = glm::vec3(viewDirection.x, viewDirection.y, -viewDirection.z);
+
+        ubo.reflectView = glm::lookAt(reflectCameraPosition, reflectCameraPosition+reflectViewDirection, glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.reflectProjection = ubo.projection;
+
+        ubo.refractView = ubo.reflectView;
+        ubo.refractProjection = ubo.projection;
+
+        //TEMP
+        //isDay = glfwGetKey(window, GLFW_KEY_T) != GLFW_PRESS;
+        if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
+            ubo.view = ubo.refractView;
+            ubo.projection = ubo.reflectProjection;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+            ubo.view = ubo.reflectView;
+            ubo.projection = ubo.reflectProjection;
+        }
 
         ubo.cameraPosition = cameraPosition;
+        ubo.viewDirection = viewDirection;
 
         ubo.nearPlane = nearPlane;
         ubo.farPlane = farPlane;
@@ -3884,7 +3944,7 @@ private:
         VkPhysicalDeviceFeatures supportedFeatures;
         vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
 
-        return indices.isComplete() && extensionsSupported && swapChainAdequate  && supportedFeatures.samplerAnisotropy;
+        return indices.isComplete() && extensionsSupported && swapChainAdequate  && supportedFeatures.samplerAnisotropy && supportedFeatures.shaderClipDistance;
     }
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device) {

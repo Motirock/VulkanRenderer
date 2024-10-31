@@ -11,6 +11,10 @@ struct Light {
 layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 projection;
+    mat4 reflectView;
+    mat4 reflectProjection;
+    mat4 refractView;
+    mat4 refractProjection;
     vec3 cameraPosition;
     vec3 viewDirection;
     float nearPlane;
@@ -27,9 +31,8 @@ layout(std430, binding = 2) readonly restrict buffer LightBuffer {
     Light lights[2000];
 } lightBuffer;
 
-
 layout(push_constant) uniform PushConstant {
-  uint isDay;
+    uint isDay;
 } pushConstant;
 
 layout(location = 0) out vec4 outColor;

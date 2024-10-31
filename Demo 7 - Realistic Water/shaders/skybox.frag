@@ -3,7 +3,9 @@
 layout(binding = 1) uniform sampler2D textureSamplers[9];
 
 layout(push_constant) uniform PushConstant {
-  uint isDay;
+    uint isWater;
+    uint isReflect;
+    uint isDay;
 } pushConstant;
 
 layout(location = 0) in vec2 fragmentTextureCoordinates;

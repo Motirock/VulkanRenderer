@@ -43,6 +43,5 @@ void main() {
         discard;
     gColor = vec4(tempColor.xyz, 1.0f);
     gNormal = vec4(getNormalFromMap(), texture(textureSamplers[8], fragmentTextureCoordinates).x);
-    // gNormal.xyz = vec3(0.0f, 0.0f, 1.0f);
     gExtra = vec4(0.0f, 0.0f, 0.0f, 0.0f);
 }
