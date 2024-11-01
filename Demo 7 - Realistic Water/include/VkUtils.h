@@ -156,6 +156,33 @@ namespace VkUtils {
             vkFreeMemory(device, memory, nullptr);
         }
     };
+
+    struct OffScreenRenderPass {
+        VkRenderPass renderPass;
+        FrameBufferAttachment positionAttachment;
+        FrameBufferAttachment colorAttachment;
+        FrameBufferAttachment normalAttachment;
+        FrameBufferAttachment bloomAttachment;
+        FrameBufferAttachment depthAttachment;
+
+        VkPipeline mainPipeline;
+        VkPipeline lightPipeline;
+        VkPipeline skyboxPipeline;
+
+        void cleanup(VkDevice device) {
+            positionAttachment.cleanup(device);
+            colorAttachment.cleanup(device);
+            normalAttachment.cleanup(device);
+            bloomAttachment.cleanup(device);
+            depthAttachment.cleanup(device);
+
+            vkDestroyPipeline(device, mainPipeline, nullptr);
+            vkDestroyPipeline(device, lightPipeline, nullptr);
+            vkDestroyPipeline(device, skyboxPipeline, nullptr);
+
+            vkDestroyRenderPass(device, renderPass, nullptr);
+        }
+    };
 }
 
 #endif

@@ -1,7 +1,7 @@
 #ifndef MARCHING_CUBES_H
 #define MARCHING_CUBES_H
 
-//This code was adapted from https://github.com/nihaljn/marching-cubes/tree/main
+//This version of the marching cubes algorithm was adapted from https://github.com/nihaljn/marching-cubes/tree/main
 
 #include "VkUtils.h"
 

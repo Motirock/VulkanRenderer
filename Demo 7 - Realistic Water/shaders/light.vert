@@ -4,9 +4,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 projection;
     mat4 reflectView;
-    mat4 reflectProjection;
     mat4 refractView;
-    mat4 refractProjection;
     vec3 cameraPosition;
     vec3 viewDirection;
     float nearPlane;
@@ -29,17 +27,19 @@ layout(location = 0) out vec3 fragmentPosition;
 layout(location = 1) out vec3 fragmentColor;
 layout(location = 2) out float fragmentStrength;
 
+const vec4 plane = vec4(0.0, 0.0, -1.0, 5.0);
+
 void main() {
     if (pushConstant.isWater == 0) {
         gl_Position = ubo.projection * ubo.view * vec4(inPosition, 1.0);
     }
     else if (pushConstant.isReflect == 1) {
-        gl_Position = ubo.reflectProjection * ubo.reflectView * vec4(inPosition, 1.0);
-        gl_ClipDistance[0] = fragmentPosition.z-5.0f;
+        gl_Position = ubo.projection * ubo.reflectView * vec4(inPosition, 1.0);    
+        gl_ClipDistance[0] = dot(vec4(inPosition, 1.0), plane);
     }
     else {
-        gl_Position = ubo.refractProjection * ubo.refractView * vec4(inPosition, 1.0);
-        gl_ClipDistance[0] = -fragmentPosition.z+5.0f;
+        gl_Position = ubo.projection * ubo.refractView * vec4(inPosition, 1.0);
+        gl_ClipDistance[0] = dot(vec4(inPosition, 1.0), vec4(plane.xy, -plane.z, plane.w));
     }
     fragmentPosition = inPosition;
     fragmentColor = inColor;

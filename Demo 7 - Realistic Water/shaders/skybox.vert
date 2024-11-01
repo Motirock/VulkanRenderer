@@ -4,9 +4,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 projection;
     mat4 reflectView;
-    mat4 reflectProjection;
     mat4 refractView;
-    mat4 refractProjection;
     vec3 cameraPosition;
     vec3 viewDirection;
     float nearPlane;
@@ -20,7 +18,7 @@ layout(push_constant) uniform PushConstant {
     uint isWater;
     uint isReflect;
     uint isDay;
-} pushConstant;
+} pushConstant; 
 
 layout(location = 0) in vec3 inPosition;
 
@@ -50,9 +48,9 @@ void main() {
         gl_Position = ubo.projection * ubo.view * vec4(inPosition*ubo.farPlane/sqrt(3)+ubo.cameraPosition, 1.0);
     }
     else if (pushConstant.isReflect == 1) {
-        gl_Position = ubo.reflectProjection * ubo.reflectView * vec4(inPosition*ubo.farPlane/sqrt(3)+ubo.cameraPosition, 1.0);
+        gl_Position = ubo.projection * ubo.reflectView * vec4(inPosition*ubo.farPlane/sqrt(3)+ubo.cameraPosition, 1.0);
     }
     else {
-        gl_Position = ubo.refractProjection * ubo.refractView * vec4(inPosition*ubo.farPlane/sqrt(3)+ubo.cameraPosition, 1.0);
+        gl_Position = ubo.projection * ubo.refractView * vec4(inPosition*ubo.farPlane/sqrt(3)+ubo.cameraPosition, 1.0);
     }
 }  
