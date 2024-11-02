@@ -1,7 +1,7 @@
 # VulkanRenderer
 
 ## To MIT Reviewer(s):  
-### On the day I submitted this, I rearranged the repository significantly. You can still go through the version/commit history to see how I have made progress. Please view the folder "MIT Portfolio" to see the version of the project I submitted.  
+### Please view the folder "Portfolio Submission Version" to see the original version of the project I submitted. The other folders show previous versions of the project, all of which should render give the proper resources.
 
 
 
