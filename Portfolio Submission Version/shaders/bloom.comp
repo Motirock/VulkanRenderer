@@ -1,0 +1,37 @@
+#version 450
+
+layout (set = 0, binding = 0, rgba8) uniform image2D inputImage;
+
+layout (set = 0, binding = 1, rgba8) uniform image2D outputImage;
+
+layout(push_constant) uniform PushConstant {
+    uint width;
+    uint height;
+    uint horizontal;
+} pushConstant;
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+float weights[9] = float[] (0.016216, 0.054054, 0.1216216, 0.1945946, 0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+//float weights[9] = float[] (0.0567, 0.08066, 0.10648, 0.12579, 0.13298, 0.12579, 0.10648, 0.08066, 0.0567);
+
+void main() {
+    for (int blurIteration = 0; blurIteration < 1; blurIteration++) {
+        if (pushConstant.horizontal != 0) {
+            ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+            vec4 color = imageLoad(outputImage, pixelCoords);
+            for (int i = 0; i < 9; i++) {
+                color = color + imageLoad(inputImage, ivec2(pixelCoords.x + i - 4, pixelCoords.y)) * weights[i];
+            }
+            imageStore(outputImage, pixelCoords, color);
+        }
+        else {
+            ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+            vec4 color = imageLoad(inputImage, pixelCoords);
+            for (int i = 0; i < 9; i++) {
+                color = color + imageLoad(outputImage, ivec2(pixelCoords.x, pixelCoords.y + i - 4)) * weights[i];
+            }
+            imageStore(inputImage, pixelCoords, color);
+        }
+    }
+}
