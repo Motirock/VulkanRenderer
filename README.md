@@ -12,3 +12,7 @@
   -CPU: i5-1340P  
   -Graphics: i915 (integrated grahics)  
   -Resolution: 2256x1504~60Hz  
+
+## Compilation requirements:  
+All compilation requirements are found here (I used this for my development environment): [https://vulkan-tutorial.com/Development_environment#page_Linux](Vulkan Tutorial)  
+You must recompile shaders as well.    
