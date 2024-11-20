@@ -14,5 +14,5 @@
   -Resolution: 2256x1504~60Hz  
 
 ## Compilation requirements:  
-All compilation requirements are found here (I used this for my development environment): [https://vulkan-tutorial.com/Development_environment#page_Linux](Vulkan Tutorial)  
+All compilation requirements are found here (I used this for my development environment): [Vulkan Tutorial](https://vulkan-tutorial.com/Development_environment)  
 You must recompile shaders as well.    
