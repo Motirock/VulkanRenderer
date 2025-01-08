@@ -1,6 +1,6 @@
 # VulkanRenderer
 
-## To MIT Reviewer(s):  
+## To Portfolio Reviewer(s):  
 ### Please view the folder "Portfolio Submission Version" to see the original version of the project I submitted. The other folders show previous versions of the project, all of which should render give the proper resources.
 
 
